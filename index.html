@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пульс — техно голосом</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Unbounded:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.8v14.4c0 .8.9 1.3 1.6.8l11-7.2a1 1 0 0 0 0-1.6l-11-7.2C7.9 3.5 7 4 7 4.8Z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.9M12 17.2v.1"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0"/></symbol>
+  <symbol id="i-drum" viewBox="0 0 24 24"><ellipse cx="12" cy="8" rx="8" ry="3"/><path d="M4 8v8c0 1.7 3.6 3 8 3s8-1.3 8-3V8M8 10.6v8M16 10.6v8M15 2l-3 6"/></symbol>
+  <symbol id="i-phones" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      <div>
+        <div class="wordmark">ПУЛЬС</div>
+        <div class="tagline">техно голосом</div>
+      </div>
+    </div>
+    <div class="transport">
+      <button id="playBtn" class="btn play" title="Пробел"><svg><use href="#i-play"/></svg><span>Играть</span></button>
+      <div class="pill bpm" title="Колесо мыши меняет темп">
+        <button class="step" data-bpm="-1" aria-label="Медленнее">−</button>
+        <div class="val"><b id="bpmVal">130</b><small>BPM</small></div>
+        <button class="step" data-bpm="1" aria-label="Быстрее">+</button>
+      </div>
+      <div class="pill keysel" title="Тональность">
+        <select id="keySel" aria-label="Тоника"></select>
+        <select id="scaleSel" aria-label="Лад"></select>
+      </div>
+      <button id="recBtn" class="btn rec" title="Записать всё, что играет, в WAV"><span class="dot"></span><span class="lbl">Запись трека</span></button>
+      <button id="undoBtn" class="btn icon" title="Отменить (Ctrl+Z)"><svg><use href="#i-undo"/></svg></button>
+      <button id="helpBtn" class="btn ghost"><svg><use href="#i-help"/></svg><span>Что сказать?</span></button>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="col">
+      <section class="card stage">
+        <canvas id="viz"></canvas>
+        <div class="stage-in">
+          <div class="voice">
+            <button id="micBtn" class="mic" aria-label="Слушать голосовые команды">
+              <span class="ring"></span><span class="ring r2"></span>
+              <svg><use href="#i-mic"/></svg>
+            </button>
+            <div class="speech">
+              <div id="vStatus" class="vstatus">Нажми на микрофон и скажи, что сыграть</div>
+              <div id="heard" class="heard"><span class="final"></span><span class="interim"></span></div>
+              <div id="did" class="did"></div>
+            </div>
+          </div>
+          <form id="typeForm" class="typer">
+            <input id="typeIn" autocomplete="off" placeholder="…или напиши команду: «добавь бочку и хэты на офбит»">
+            <button class="btn icon lime" title="Выполнить" aria-label="Выполнить"><svg><use href="#i-send"/></svg></button>
+          </form>
+          <div id="chips" class="chips"></div>
+        </div>
+      </section>
+
+      <section class="card seq">
+        <div class="card-h">
+          <h2>Паттерн</h2><span class="sub">1 такт · 16 шагов</span>
+          <span class="spacer"></span><span id="genreTag" class="tag" hidden></span>
+        </div>
+        <div class="grid-wrap"><div id="grid" class="grid"></div></div>
+        <div id="emptyHint" class="empty-hint">Скажи <b>«сделай техно»</b> — или собирай по частям: <b>«добавь бочку»</b>, <b>«хэты на офбит»</b>, <b>«кислотный бас»</b></div>
+        <div class="seq-foot">Клик по клетке — поставить или убрать удар. Колесо мыши на ноте — выше/ниже. Shift+клик — акцент, Alt+клик — глайд у баса.</div>
+      </section>
+    </div>
+
+    <aside class="col side">
+      <section class="card capture">
+        <div class="card-h"><h2>Голос → ноты</h2></div>
+        <div class="cap">
+          <b>Напой партию</b>
+          <p>Мычи или пой «да-да-дам» — превращу в ноты в тональности трека.</p>
+          <div class="seg" id="humSeg">
+            <button data-t="bass" class="on">Бас</button><button data-t="lead">Мелодия</button><button data-t="stab">Аккорды</button>
+          </div>
+          <button id="humBtn" class="btn wide lime"><svg><use href="#i-wave"/></svg><span>Напеть 1 такт</span></button>
+        </div>
+        <div class="cap">
+          <b>Битбокс → барабаны</b>
+          <p>«бум» — бочка, «тс» — хэт, «пщ» или «ка» — клэп.</p>
+          <button id="bbxBtn" class="btn wide"><svg><use href="#i-drum"/></svg><span>Отбить 1 такт</span></button>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="phonesChk"><span class="sw"></span>
+          <span>Я в наушниках — играть бит во время записи</span>
+        </label>
+      </section>
+
+      <section class="card sound">
+        <div class="card-h"><h2>Звук</h2></div>
+        <div id="knobs" class="knobs"></div>
+      </section>
+
+      <section class="card logc">
+        <div class="card-h"><h2>Что я понял</h2></div>
+        <ol id="log" class="log"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot">Голосовые команды распознаёт Google Chrome (нужен интернет). Звук, ноты и битбокс работают прямо на компьютере.</footer>
+</div>
+
+<div id="take" class="take" hidden>
+  <div class="take-card">
+    <div id="takeTitle" class="take-title">Напой бас</div>
+    <div id="takeBig" class="take-big">4</div>
+    <div id="takeLabel" class="take-label">Приготовься</div>
+    <div id="takeSteps" class="take-steps"></div>
+    <div class="take-meter"><i id="takeLvl"></i></div>
+    <div id="takeHint" class="take-hint"></div>
+    <button id="takeCancel" class="btn ghost">Отмена</button>
+  </div>
+</div>
+
+<dialog id="helpDlg" class="help">
+  <div class="help-h">
+    <h2>Что можно сказать</h2>
+    <button id="helpClose" class="btn icon" aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
+  </div>
+  <p class="help-sub">Говори как удобно — понимаю разные формы слов. Можно несколько команд сразу: «добавь бочку, хэты на офбит и кислотный бас». Нажми на фразу, чтобы попробовать.</p>
+  <div id="helpBody" class="help-body"></div>
+</dialog>
+
+<div id="toasts" class="toasts"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
