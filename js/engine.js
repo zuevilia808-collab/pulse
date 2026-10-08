@@ -1,10 +1,11 @@
 // Звуковой движок: синтез всех инструментов в Web Audio, секвенсор с упреждением,
-// эффекты (реверб, эхо, румбл, сайдчейн), запись выхода в WAV.
-import { TRACKS, mtof, baseMidi, deg, semiToDeg } from './music.js';
+// эффекты (реверб, эхо, румбл, сайдчейн), проигрывание трека по частям, запись в WAV.
+import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js';
 
 const dbToGain = v => 10 ** (v / 20);
 const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34 };
 const LOOKAHEAD = 0.12;
+const CHORDS = { seventh: [0, 2, 4, 6], triad: [0, 2, 4], fifth: [0, 4, 7], sus: [0, 3, 4] };
 
 const TICKER = 'let id=null;onmessage=e=>{if(e.data==="start"){if(!id)id=setInterval(()=>postMessage(0),20)}else{clearInterval(id);id=null}}';
 
@@ -19,26 +20,37 @@ export class Engine {
     this.queues = { beat: [], bar: [] };
     this.take = null;
     this.build = null;
+    // Режим трека: barFn(номер такта) отдаёт, что играет в этом такте (arrange.js → barData).
+    this.mode = 'loop';
+    this.barFn = null;
+    this.songPos = 0;
+    this.seekTo = null;
+    this.cur = null;
     this.onStep = null;
     this.onKick = null;
     this.onBuildEnd = null;
+    this.onSongBar = null;
+    this.onSongEnd = null;
   }
 
-  async init() {
+  async init(offlineCtx = null) {
     if (this.ctx) {
       if (this.ctx.state !== 'running') await this.ctx.resume();
       return;
     }
-    const ctx = this.ctx = new AudioContext({ latencyHint: 'interactive' });
+    const ctx = this.ctx = offlineCtx || new AudioContext({ latencyHint: 'interactive' });
+    this.offline = !!offlineCtx;
     const G = (v = 1) => { const g = ctx.createGain(); g.gain.value = v; return g; };
     const F = (type, f, q = 0.7) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
     this.G = G;
     this.F = F;
 
-    // Мастер: сумма → фильтры для брейков → компрессор → лимитер → гейт записи голоса → громкость → анализатор.
+    // Мастер: сумма → фильтры брейков → фильтры трека → компрессор → лимитер → гейт записи голоса → громкость.
     this.mix = G(0.6);
     this.hp = F('highpass', 10);
     this.lp = F('lowpass', 20000, 0.8);
+    this.sHP = F('highpass', 20);
+    this.sLP = F('lowpass', 20000, 0.8);
     this.comp = ctx.createDynamicsCompressor();
     this.comp.threshold.value = -10; this.comp.ratio.value = 2.5; this.comp.knee.value = 6;
     this.comp.attack.value = 0.005; this.comp.release.value = 0.12;
@@ -50,8 +62,8 @@ export class Engine {
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.78;
-    this.mix.connect(this.hp).connect(this.lp).connect(this.comp).connect(this.limit).connect(this.gate)
-      .connect(this.out).connect(this.analyser).connect(ctx.destination);
+    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.comp).connect(this.limit)
+      .connect(this.gate).connect(this.out).connect(this.analyser).connect(ctx.destination);
 
     this.silent = G(0);
     this.silent.connect(ctx.destination);
@@ -92,17 +104,24 @@ export class Engine {
     this.rumbleIn.connect(rConv).connect(F('lowpass', 140, 1.4)).connect(rShaper).connect(F('highpass', 32))
       .connect(this.rumbleDuck).connect(this.rumbleOut).connect(this.mix);
 
-    // Каналы дорожек с посылами на эффекты
+    // Шина переходов (свуш, тарелка, спуск)
+    this.fxBus = G(0.9);
+    this.fxBus.connect(this.mix);
+    this.fxBus.connect(G(0.35)).connect(this.revIn);
+
+    // Каналы дорожек: громкость → громкость части трека → шина и посылы на эффекты
     this.ch = {};
+    this.arrG = {};
     this.sendR = {};
     this.sendD = {};
     for (const t of TRACKS) {
-      const c = G(1);
-      c.connect(t.kind === 'drum' ? this.drums : this.duck);
+      const c = G(1), a = G(1);
+      c.connect(a).connect(t.kind === 'drum' ? this.drums : this.duck);
       const r = G(0), d = G(0);
-      c.connect(r).connect(this.revIn);
-      c.connect(d).connect(this.dlyIn);
+      a.connect(r).connect(this.revIn);
+      a.connect(d).connect(this.dlyIn);
       this.ch[t.id] = c;
+      this.arrG[t.id] = a;
       this.sendR[t.id] = r;
       this.sendD[t.id] = d;
     }
@@ -111,19 +130,30 @@ export class Engine {
     this.kickShaper.oversample = '2x';
     this.kickShaper.connect(this.ch.kick);
 
-    // Бас — постоянный монофонический голос, как у 303: генератор → 2 фильтра → VCA → перегруз
+    // Бас — постоянный монофонический голос, как у 303: генераторы → 2 фильтра → VCA → перегруз.
+    // Второй генератор (расстроенная пила) нужен для «риза», саб — для низа.
     this.bOsc = ctx.createOscillator();
     this.bOsc.type = 'sawtooth';
+    this.bOsc2 = ctx.createOscillator();
+    this.bOsc2.type = 'sawtooth';
+    this.bSub = ctx.createOscillator();
+    this.bO2g = G(0);
+    this.bSubG = G(0);
     this.bF1 = F('lowpass', 400, 8);
     this.bF2 = F('lowpass', 520, 0.5);
     this.bVca = G(0);
     this.bShaper = ctx.createWaveShaper();
     this.bShaper.oversample = '2x';
-    this.bOsc.connect(this.bF1).connect(this.bF2).connect(this.bVca).connect(this.bShaper).connect(this.ch.bass);
-    this.bOsc.start();
+    this.bOsc.connect(this.bF1);
+    this.bOsc2.connect(this.bO2g).connect(this.bF1);
+    this.bSub.connect(this.bSubG).connect(this.bF1);
+    this.bF1.connect(this.bF2).connect(this.bVca).connect(this.bShaper).connect(this.ch.bass);
+    for (const o of [this.bOsc, this.bOsc2, this.bSub]) o.start();
 
-    this.ticker = new Worker(URL.createObjectURL(new Blob([TICKER], { type: 'text/javascript' })));
-    this.ticker.onmessage = () => this.tick();
+    if (!this.offline) {
+      this.ticker = new Worker(URL.createObjectURL(new Blob([TICKER], { type: 'text/javascript' })));
+      this.ticker.onmessage = () => this.tick();
+    }
     this.applyParams();
   }
 
@@ -169,6 +199,9 @@ export class Engine {
     const b = st.tracks.bass.p;
     if (b.drive !== this._bd) { this.bShaper.curve = this.curve(b.drive); this._bd = b.drive; }
     if (this.bOsc.type !== b.wave) this.bOsc.type = b.wave;
+    set(this.bO2g.gain, b.osc2 || 0);
+    set(this.bOsc2.detune, b.det || 0);
+    set(this.bSubG.gain, b.sub || 0);
     set(this.bF1.Q, b.res);
     if (!this.playing) { set(this.bF1.frequency, b.cutoff); set(this.bF2.frequency, b.cutoff * 1.3); }
     set(this.out.gain, dbToGain(st.master.vol));
@@ -183,35 +216,38 @@ export class Engine {
   stepDur() { return 60 / this.getState().bpm / 4; }
   nextBarTime() { return this.nextTime + ((16 - this.step) % 16) * this.stepDur(); }
 
-  start() {
+  start(at = null) {
     if (!this.ctx || this.playing) return;
     this.playing = true;
     this.step = 0;
     this.bar = 0;
-    this.nextTime = this.ctx.currentTime + 0.08;
-    this.ticker.postMessage('start');
+    this.ended = false;
+    this.nextTime = at ?? this.ctx.currentTime + 0.08;
+    if (this.ticker) this.ticker.postMessage('start');
     this.tick();
   }
 
   stop() {
     if (!this.playing) return;
     this.playing = false;
-    this.ticker.postMessage('stop');
+    this.ticker?.postMessage('stop');
     const now = this.ctx.currentTime;
     this.bVca.gain.cancelScheduledValues(now);
     this.bVca.gain.setTargetAtTime(0, now, 0.02);
     for (const q of ['beat', 'bar']) this.queues[q].splice(0).forEach(f => f(now));
     this.endBuild(now);
+    if (this.cur) { this.cur = null; this.resetSong(now); }
   }
 
   // Выполнить fn в начале следующей доли/такта (fn получает точное время).
   queue(unit, fn) { this.queues[unit].push(fn); }
 
-  tick() {
+  tick(until = null) {
     if (!this.playing) return;
     const now = this.ctx.currentTime;
-    if (this.nextTime < now - 0.25) this.nextTime = now + 0.03; // вкладка подвисала — догоняем
-    while (this.nextTime < now + LOOKAHEAD) {
+    if (until == null && this.nextTime < now - 0.25) this.nextTime = now + 0.03; // вкладка подвисала — догоняем
+    const end = until ?? now + LOOKAHEAD;
+    while (this.playing && this.nextTime < end) {
       this.scheduleStep(this.step, this.nextTime);
       this.nextTime += this.stepDur();
       this.step = (this.step + 1) % 16;
@@ -219,9 +255,62 @@ export class Engine {
     }
   }
 
+  setMode(mode) {
+    this.mode = mode;
+    if (mode === 'loop') this.seekTo = null;
+  }
+
+  // Перейти к такту трека с начала следующего такта.
+  seek(bar) {
+    this.seekTo = bar;
+    this.ended = false;
+  }
+
+  resetSong(t) {
+    for (const t2 of TRACKS) { this.arrG[t2.id].gain.cancelScheduledValues(t); this.arrG[t2.id].gain.setTargetAtTime(1, t, 0.02); }
+    for (const [f, v] of [[this.sLP.frequency, 20000], [this.sHP.frequency, 20]]) { f.cancelScheduledValues(t); f.setValueAtTime(v, t); }
+  }
+
+  // Начало такта в режиме трека: что играет, фильтры, переходы.
+  enterBar(t0) {
+    if (this.mode !== 'song' || !this.barFn) {
+      if (this.cur) { this.cur = null; this.resetSong(t0); }
+      return;
+    }
+    if (this.seekTo != null) { this.songPos = this.seekTo; this.seekTo = null; this.endBuild(t0); }
+    const info = this.barFn(this.songPos);
+    if (!info) {
+      this.cur = { steps: {}, gain: {}, cut: {}, end: true };
+      if (!this.ended) { this.ended = true; this.onSongEnd?.(t0); }
+      return;
+    }
+    const bd = 16 * this.stepDur();
+    this.cur = info;
+    for (const t of TRACKS) {
+      const g = this.arrG[t.id].gain;
+      g.cancelScheduledValues(t0);
+      g.setTargetAtTime(info.gain[t.id] ?? 1, t0, 0.015);
+    }
+    for (const [f, [a, b]] of [[this.sLP.frequency, info.lp], [this.sHP.frequency, info.hp]]) {
+      f.cancelScheduledValues(t0);
+      f.setValueAtTime(a, t0);
+      if (b !== a) f.exponentialRampToValueAtTime(b, t0 + bd);
+    }
+    for (const fx of info.fx) {
+      if (fx.type === 'riser') this.riser(t0, fx.bars * bd);
+      else if (fx.type === 'impact') this.impact(t0);
+      else if (fx.type === 'crash') this.crash(t0);
+      else if (fx.type === 'down') this.downlifter(t0, Math.min(bd * 2, 4));
+      else if (fx.type === 'swell') { const d = Math.min(bd, 2.2); this.swell(t0 + bd - d, d); }
+    }
+    this.onSongBar?.(this.songPos, t0);
+    this.songPos++;
+  }
+
   scheduleStep(s, t0) {
     if (s % 4 === 0 && this.queues.beat.length) this.queues.beat.splice(0).forEach(f => f(t0));
     if (s === 0 && this.queues.bar.length) this.queues.bar.splice(0).forEach(f => f(t0));
+    if (s === 0) this.enterBar(t0);
     if (this.build && t0 >= this.build.t1 - 1e-3) { this.build = null; this.onBuildEnd?.(t0); }
 
     const st = this.getState();
@@ -231,23 +320,31 @@ export class Engine {
     const take = this.take && t0 >= this.take.countStart - 1e-3 && t0 < this.take.recEnd - 1e-3 ? this.take : null;
     const b = this.build && t0 >= this.build.t0 - 1e-3 ? this.build : null;
     const prog = b ? (t0 - b.t0) / (b.t1 - b.t0) : 0;
+    const cur = this.cur;
 
     for (const tr of TRACKS) {
       const T = st.tracks[tr.id];
       if (T.mute || (anySolo && !T.solo)) continue;
       if (take && take.mute.includes(tr.id)) continue;
       if (b && prog > 0.875 && (tr.id === 'kick' || tr.id === 'bass')) continue;
+      const steps = cur ? cur.steps[tr.id] : T.steps;
+      if (!steps) continue;
       if (tr.kind === 'drum') {
-        const v = T.steps[s];
+        const v = steps[s];
         if (v) this.hit(tr.id, t, v, T.p, s);
       } else {
-        const n = T.steps[s];
-        if (n) this.note(tr.id, t, n, T, s, st, sd);
+        const n = steps[s];
+        if (n) this.note(tr.id, t, n, T, s, st, sd, steps, cur ? cur.cut[tr.id] ?? 1 : 1);
       }
     }
     if (b) {
       const every = prog < 0.5 ? 4 : prog < 0.75 ? 2 : 1;
       if (s % every === 0) this.clap(t, 0.35 + 0.6 * prog, { tone: 900 + 2200 * prog, decay: 0.12 }, true);
+    }
+    if (cur && cur.roll) {
+      const p = cur.roll[0] + ((cur.roll[1] - cur.roll[0]) * s) / 16;
+      const every = p < 0.5 ? 4 : p < 0.75 ? 2 : 1;
+      if (s % every === 0) this.clap(t, 0.3 + 0.6 * p, { tone: 900 + 2200 * p, decay: 0.12 }, true);
     }
     if ((take || st.metronome) && s % 4 === 0) this.click(t, s === 0);
     this.onStep?.(s, t, this.bar);
@@ -276,17 +373,20 @@ export class Engine {
 
   kick(t, v, p) {
     const ctx = this.ctx, o = ctx.createOscillator(), g = this.G(0);
-    const f = p.tune, dec = p.decay;
-    o.frequency.setValueAtTime(f * 6, t);
-    o.frequency.exponentialRampToValueAtTime(f * 1.5, t + 0.025);
-    o.frequency.exponentialRampToValueAtTime(f, t + 0.12);
+    const f = p.tune, dec = p.decay, sw = p.sweep ?? 6, bend = p.bend ?? 0.12;
+    o.type = p.wave || 'sine';
+    o.frequency.setValueAtTime(f * sw, t);
+    o.frequency.exponentialRampToValueAtTime(f * Math.min(1.5, sw), t + bend * 0.2);
+    o.frequency.exponentialRampToValueAtTime(f, t + bend);
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(v, t + 0.003);
-    g.gain.setValueAtTime(v, t + dec * 0.3);
+    g.gain.setValueAtTime(v, t + dec * (p.hold ?? 0.3));
     g.gain.exponentialRampToValueAtTime(0.001, t + dec);
     o.connect(g);
-    g.connect(this.kickShaper);
-    g.connect(this.rumbleIn);
+    let body = g;
+    if (p.tone && p.tone < 18000) body = g.connect(this.F('lowpass', p.tone, 0.7));
+    body.connect(this.kickShaper);
+    body.connect(this.rumbleIn);
     o.start(t);
     o.stop(t + dec + 0.05);
     if (p.click > 0) {
@@ -295,43 +395,62 @@ export class Engine {
       cg.gain.exponentialRampToValueAtTime(0.001, t + 0.012);
       n.connect(this.F('highpass', 2500)).connect(cg).connect(this.kickShaper);
     }
+    if (p.grit > 0) {
+      const n = this.noiseSrc(t, dec), ng = this.G(0);
+      ng.gain.setValueAtTime(p.grit * v * 0.5, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + dec * 0.6);
+      n.connect(this.F('bandpass', 180, 0.8)).connect(ng).connect(this.kickShaper);
+    }
     this.duckAt(this.duck.gain, t, 0.55);
     this.duckAt(this.rumbleDuck.gain, t, 0.95);
     this.onKick?.(t);
   }
 
   clap(t, v, p, roll = false) {
-    const n = this.noiseSrc(t, 0.1 + p.decay), g = this.G(0);
-    if (!roll) {
-      for (let i = 0; i < 3; i++) {
-        const ti = t + i * 0.0105;
-        g.gain.setValueAtTime(v, ti);
-        g.gain.exponentialRampToValueAtTime(v * 0.15, ti + 0.009);
-      }
+    const bursts = roll ? 0 : p.bursts ?? 3, sp = p.spread ?? 0.0105;
+    const n = this.noiseSrc(t, 0.1 + p.decay + bursts * sp), g = this.G(0);
+    for (let i = 0; i < bursts; i++) {
+      const ti = t + i * sp;
+      g.gain.setValueAtTime(v, ti);
+      g.gain.exponentialRampToValueAtTime(v * 0.15, ti + sp * 0.85);
     }
-    const t2 = roll ? t : t + 0.032;
+    const t2 = t + bursts * sp + (bursts ? 0.0005 : 0);
     g.gain.setValueAtTime(v, t2);
     g.gain.exponentialRampToValueAtTime(0.001, t2 + p.decay);
-    n.connect(this.F('bandpass', p.tone, 1.1)).connect(this.F('highpass', 600)).connect(g).connect(this.ch.clap);
+    n.connect(this.F('bandpass', p.tone, p.q ?? 1.1)).connect(this.F('highpass', p.hp ?? 600)).connect(g).connect(this.ch.clap);
+    if (!roll && p.body > 0) {
+      const o = this.ctx.createOscillator(), og = this.G(0), f = p.bodyF || 200, d = Math.min(0.15, p.decay);
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(f * 1.5, t);
+      o.frequency.exponentialRampToValueAtTime(f, t + 0.03);
+      og.gain.setValueAtTime(v * p.body * 0.8, t);
+      og.gain.exponentialRampToValueAtTime(0.001, t + d);
+      o.connect(og).connect(this.ch.clap);
+      o.start(t);
+      o.stop(t + d + 0.03);
+    }
   }
 
   hat(t, v, p, open) {
     const ctx = this.ctx, dec = p.decay, end = t + dec + 0.03, k = p.tone / 8000;
-    const bp = this.F('bandpass', p.tone * 1.25, 0.9), g = this.G(0), mg = this.G(0.16);
-    for (const f of [205.3, 304.4, 369.6, 522.7, 540, 800]) {
-      const o = ctx.createOscillator();
-      o.type = 'square';
-      o.frequency.value = f * k;
-      o.connect(mg);
-      o.start(t);
-      o.stop(end);
+    const bp = this.F('bandpass', p.tone * 1.25, p.q ?? 0.9), g = this.G(0), metal = p.metal ?? 0.16;
+    if (metal > 0) {
+      const mg = this.G(metal);
+      for (const f of [205.3, 304.4, 369.6, 522.7, 540, 800]) {
+        const o = ctx.createOscillator();
+        o.type = 'square';
+        o.frequency.value = f * k;
+        o.connect(mg);
+        o.start(t);
+        o.stop(end);
+      }
+      mg.connect(bp);
     }
-    const n = this.noiseSrc(t, dec + 0.02), ng = this.G(0.5);
+    const n = this.noiseSrc(t, dec + 0.02), ng = this.G(p.noise ?? 0.5);
     n.connect(ng).connect(bp);
-    mg.connect(bp);
     bp.connect(this.F('highpass', p.tone * 0.85)).connect(g).connect(this.ch[open ? 'ohat' : 'hat']);
-    g.gain.setValueAtTime(v, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dec);
+    if (p.att > 0) { g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + p.att); } else g.gain.setValueAtTime(v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + Math.max(dec, (p.att || 0) + 0.01));
     if (open) this.lastOpen = g;
     else if (this.lastOpen) {
       const prm = this.lastOpen.gain;
@@ -342,38 +461,50 @@ export class Engine {
   }
 
   perc(t, v, p, s) {
-    const f = p.tune * [1, 1.335, 0.75, 1.5][(s * 7) % 4];
-    const o = this.ctx.createOscillator(), g = this.G(0);
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(f * 1.6, t);
-    o.frequency.exponentialRampToValueAtTime(f, t + 0.02);
+    const ratios = p.ratios || [1, 1.335, 0.75, 1.5];
+    const f = p.tune * ratios[(s * 7) % ratios.length], drop = p.drop ?? 1.6, end = t + p.decay + 0.03;
+    const g = this.G(0);
     g.gain.setValueAtTime(v, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + p.decay);
-    o.connect(g).connect(this.ch.perc);
-    o.start(t);
-    o.stop(t + p.decay + 0.03);
-    const n = this.noiseSrc(t, 0.02), ng = this.G(0);
-    ng.gain.setValueAtTime(v * 0.4, t);
-    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.015);
-    n.connect(this.F('bandpass', Math.min(15000, f * 4), 2)).connect(ng).connect(this.ch.perc);
+    const dest = p.band ? this.F('bandpass', f * p.band, 1.2) : null;
+    if (dest) dest.connect(g);
+    for (const [mul, lvl] of p.pair ? [[1, 1], [p.pair, 0.6]] : [[1, 1]]) {
+      const o = this.ctx.createOscillator(), og = this.G(lvl);
+      o.type = p.wave || 'triangle';
+      o.frequency.setValueAtTime(f * mul * drop, t);
+      if (drop !== 1) o.frequency.exponentialRampToValueAtTime(f * mul, t + 0.02);
+      o.connect(og).connect(dest || g);
+      o.start(t);
+      o.stop(end);
+    }
+    g.connect(this.ch.perc);
+    const nz = p.noise ?? 0.4;
+    if (nz > 0) {
+      const n = this.noiseSrc(t, 0.02), ng = this.G(0);
+      ng.gain.setValueAtTime(v * nz, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.015);
+      n.connect(this.F('bandpass', Math.min(15000, f * 4), 2)).connect(ng).connect(this.ch.perc);
+    }
   }
 
   // ——— Синты ———
-  note(id, t, n, T, s, st, sd) {
+  note(id, t, n, T, s, st, sd, steps, cut = 1) {
     const midi = baseMidi(st.key, id) + n.n;
     if (id === 'bass') {
       const len = n.len || 1;
-      const nx = T.steps[(s + len) % 16];
+      const nx = steps[(s + len) % 16];
       const legato = !!(nx && nx.slide);
-      this.bassNote(t, midi, !!n.acc, !!n.slide, len * sd * (legato ? 1.02 : 0.6), legato, T.p);
-    } else if (id === 'stab') this.stab(t, n, T.p, st, sd);
-    else this.lead(t, midi, n, T.p, sd);
+      this.bassNote(t, midi, !!n.acc, !!n.slide, len * sd * (legato ? 1.02 : 0.6), legato, T.p, cut);
+    } else if (id === 'stab') this.stab(t, n, T.p, st, sd, cut);
+    else this.lead(t, midi, n, T.p, sd, cut);
   }
 
-  bassNote(t, midi, acc, slide, dur, legato, p) {
-    const f = mtof(midi), of = this.bOsc.frequency;
-    if (slide) of.setTargetAtTime(f, t, 0.025); else of.setValueAtTime(f, t);
-    const base = p.cutoff, peak = Math.min(16000, base + (acc ? 1.5 : 1) * p.env * 5000 + 150);
+  bassNote(t, midi, acc, slide, dur, legato, p, cut = 1) {
+    const f = mtof(midi), gl = p.glide ?? 0.025;
+    for (const [o, m] of [[this.bOsc, 1], [this.bOsc2, 1], [this.bSub, 0.5]]) {
+      if (slide) o.frequency.setTargetAtTime(f * m, t, gl); else o.frequency.setValueAtTime(f * m, t);
+    }
+    const base = Math.min(16000, p.cutoff * cut), peak = Math.min(16000, base + (acc ? 1.5 : 1) * p.env * 5000 + 150);
     const tc = (acc ? 0.5 : 1) * p.decay * 0.5;
     if (!slide) {
       for (const [flt, m] of [[this.bF1, 1], [this.bF2, 1.3]]) {
@@ -386,7 +517,7 @@ export class Engine {
       vg.setTargetAtTime(0, t - 0.004, 0.0012);
       vg.setTargetAtTime(lvl, t, 0.0015);
     } else vg.setTargetAtTime(lvl, t, 0.01);
-    if (!legato) vg.setTargetAtTime(0, t + dur, 0.012);
+    if (!legato) vg.setTargetAtTime(0, t + dur, p.rel ?? 0.012);
   }
 
   releaseBass() {
@@ -396,22 +527,25 @@ export class Engine {
     this.bVca.gain.setTargetAtTime(0, now, 0.02);
   }
 
-  stab(t, n, p, st, sd) {
-    const ctx = this.ctx, d0 = semiToDeg(n.n, st.scale), root = baseMidi(st.key, 'stab');
-    const end = t + p.decay * 4 + 0.15;
-    const flt = this.F('lowpass', p.cutoff, p.res || 2), g = this.G(0);
-    flt.frequency.setValueAtTime(p.cutoff * 2.2, t);
-    flt.frequency.setTargetAtTime(p.cutoff * 0.6, t + 0.005, p.decay * 0.5);
+  stab(t, n, p, st, sd, cut = 1) {
+    const ctx = this.ctx, d0 = semiToDeg(n.n, st.scale), root = baseMidi(st.key, 'stab') + 12 * (p.oct || 0);
+    const chord = CHORDS[p.chord] || CHORDS.seventh, att = p.attack ?? 0.004, rel = p.decay;
+    const gate = Math.max(att, Math.min((n.len || 1) * sd, p.hold ?? 0.4));
+    const end = t + gate + rel * 4 + 0.15, c = p.cutoff * cut, det = p.det ?? 9;
+    const flt = this.F('lowpass', c, p.res || 2), g = this.G(0);
+    const lvl = 0.2 * Math.sqrt(4 / chord.length) * (p.gain ?? 1);
+    flt.frequency.setValueAtTime(c * (p.env ?? 2.2), t);
+    flt.frequency.setTargetAtTime(c * 0.6, t + 0.005 + att, rel * 0.5);
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.2, t + 0.004);
-    g.gain.setTargetAtTime(0, t + Math.min((n.len || 1) * sd, 0.4), p.decay * 0.6);
-    for (const k of [0, 2, 4, 6]) {
+    g.gain.linearRampToValueAtTime(lvl, t + att);
+    g.gain.setTargetAtTime(0, t + gate, rel * 0.6);
+    for (const k of chord) {
       const f = mtof(root + deg(st.scale, d0 + k));
-      for (const det of [-9, 9]) {
+      for (const dt of [-det, det]) {
         const o = ctx.createOscillator();
-        o.type = 'sawtooth';
+        o.type = p.wave || 'sawtooth';
         o.frequency.value = f;
-        o.detune.value = det;
+        o.detune.value = dt;
         o.connect(flt);
         o.start(t);
         o.stop(end);
@@ -420,25 +554,57 @@ export class Engine {
     flt.connect(g).connect(this.ch.stab);
   }
 
-  lead(t, midi, n, p, sd) {
-    const ctx = this.ctx, dur = (n.len || 1) * sd * 0.85, f = mtof(midi), end = t + dur + 0.3;
-    const flt = this.F('lowpass', p.cutoff, p.res || 3), g = this.G(0);
-    flt.frequency.setValueAtTime(p.cutoff * 2.5, t);
-    flt.frequency.setTargetAtTime(p.cutoff, t + 0.005, p.decay * 0.4);
+  lead(t, midi, n, p, sd, cut = 1) {
+    const ctx = this.ctx, dur = (n.len || 1) * sd * 0.85, f = mtof(midi), att = p.attack ?? 0.005, rel = p.rel ?? 0.03;
+    const end = t + Math.max(dur, att) + rel * 5 + 0.1, c = Math.min(16000, p.cutoff * cut), lvl = 0.35 * (p.gain ?? 1);
+    const flt = this.F('lowpass', c, p.res || 3), g = this.G(0);
+    flt.frequency.setValueAtTime(Math.min(18000, c * 2.5), t);
+    flt.frequency.setTargetAtTime(c, t + 0.005, p.decay * 0.4);
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.35, t + 0.005);
-    g.gain.setTargetAtTime(0.18, t + 0.01, p.decay * 0.4);
-    g.gain.setTargetAtTime(0, t + dur, 0.03);
-    for (const det of [-7, 7]) {
-      const o = ctx.createOscillator();
-      o.type = p.wave || 'sawtooth';
+    g.gain.linearRampToValueAtTime(lvl, t + att);
+    g.gain.setTargetAtTime(lvl * 0.5, t + att + 0.005, p.decay * 0.4);
+    g.gain.setTargetAtTime(0, t + Math.max(dur, att), rel);
+    const oscs = [];
+    if (p.fm > 0) {
+      // Колокол: синус, которым качает второй синус (частотная модуляция)
+      const o = ctx.createOscillator(), m = ctx.createOscillator(), mg = this.G(0);
       o.frequency.value = f;
-      o.detune.value = det;
+      m.frequency.value = f * (p.fmr || 2);
+      mg.gain.setValueAtTime(f * p.fm, t);
+      mg.gain.setTargetAtTime(f * p.fm * 0.15, t, p.decay * 0.5);
+      m.connect(mg).connect(o.frequency);
       o.connect(flt);
-      o.start(t);
-      o.stop(end);
+      oscs.push(o, m);
+    } else {
+      const det = p.det ?? 7;
+      for (const dt of det ? [-det, det] : [0]) {
+        const o = ctx.createOscillator();
+        o.type = p.wave || 'sawtooth';
+        o.frequency.value = f;
+        o.detune.value = dt;
+        o.connect(flt);
+        oscs.push(o);
+      }
     }
+    if (p.vib > 0) {
+      const l = ctx.createOscillator(), lg = this.G(p.vib);
+      l.frequency.value = 5.2;
+      l.connect(lg);
+      for (const o of oscs) lg.connect(o.detune);
+      oscs.push(l);
+    }
+    for (const o of oscs) { o.start(t); o.stop(end); }
     flt.connect(g).connect(this.ch.lead);
+  }
+
+  // Прослушать звук дорожки прямо сейчас (при выборе звука или ноты).
+  preview(id, n = 0) {
+    if (!this.ctx) return;
+    const st = this.getState(), T = st.tracks[id], t = this.ctx.currentTime + 0.02, sd = 60 / st.bpm / 4;
+    if (TRACK[id].kind === 'drum') this.hit(id, t, 0.9, T.p, 0);
+    else if (id === 'bass') this.bassNote(t, baseMidi(st.key, 'bass') + n, false, false, sd * 2, false, T.p);
+    else if (id === 'stab') this.stab(t, { n, len: 2 }, T.p, st, sd);
+    else this.lead(t, baseMidi(st.key, 'lead') + n, { n, len: 2 }, T.p, sd);
   }
 
   // Метроном: чистый синус 2,5 кГц — его вырезает фильтр на микрофоне.
@@ -453,7 +619,7 @@ export class Engine {
     o.stop(t + 0.06);
   }
 
-  // ——— Шоу: нарастание и дроп ———
+  // ——— Шоу: нарастание, дроп и переходы ———
   riser(t, dur) {
     const n = this.ctx.createBufferSource();
     n.buffer = this.noise;
@@ -470,6 +636,61 @@ export class Engine {
     n.start(t);
     n.stop(t + dur + 0.3);
     this.riserGain = g;
+  }
+
+  // Обратная тарелка: шум нарастает и обрывается ровно к следующему такту.
+  swell(t, dur) {
+    const n = this.ctx.createBufferSource();
+    n.buffer = this.noise;
+    n.loop = true;
+    const g = this.G(0);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.42, t + dur);
+    g.gain.setValueAtTime(0, t + dur + 0.005);
+    n.connect(this.F('highpass', 2500)).connect(g).connect(this.fxBus);
+    n.start(t);
+    n.stop(t + dur + 0.05);
+  }
+
+  // Спуск: шум и тон уходят вниз в начале брейка.
+  downlifter(t, dur) {
+    const n = this.ctx.createBufferSource();
+    n.buffer = this.noise;
+    n.loop = true;
+    const bp = this.F('bandpass', 6000, 2), g = this.G(0);
+    bp.frequency.setValueAtTime(6000, t);
+    bp.frequency.exponentialRampToValueAtTime(250, t + dur);
+    g.gain.setValueAtTime(0.4, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    n.connect(bp).connect(g).connect(this.fxBus);
+    n.start(t);
+    n.stop(t + dur + 0.05);
+    const o = this.ctx.createOscillator(), og = this.G(0);
+    o.frequency.setValueAtTime(420, t);
+    o.frequency.exponentialRampToValueAtTime(50, t + dur * 0.8);
+    og.gain.setValueAtTime(0.18, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.8);
+    o.connect(og).connect(this.fxBus);
+    o.start(t);
+    o.stop(t + dur);
+  }
+
+  // Тарелка в начале новой фразы.
+  crash(t) {
+    const dur = 2.2, end = t + dur + 0.05, g = this.G(0), bp = this.F('bandpass', 7000, 0.6), mg = this.G(0.25);
+    for (const f of [205.3, 304.4, 369.6, 522.7, 540, 800]) {
+      const o = this.ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f * 0.8;
+      o.connect(mg);
+      o.start(t);
+      o.stop(end);
+    }
+    mg.connect(bp);
+    this.noiseSrc(t, dur).connect(this.G(0.7)).connect(bp);
+    bp.connect(this.F('highpass', 4000)).connect(g).connect(this.fxBus);
+    g.gain.setValueAtTime(0.32, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   }
 
   startBuild(t, bars = 2) {
@@ -536,7 +757,7 @@ export class Engine {
     return this._wl;
   }
 
-  // ——— Запись трека в WAV ———
+  // ——— Запись того, что играет, в WAV ———
   async recStart() {
     await this.loadWorklet();
     const node = new AudioWorkletNode(this.ctx, 'capture', {
@@ -573,6 +794,35 @@ export class Engine {
     this.recData = null;
     return { blob, sec };
   }
+}
+
+// Быстрый рендер всего трека без проигрывания: отдельный движок на OfflineAudioContext,
+// такты подкладываются кусками по полсекунды (suspend → запланировать → resume).
+export async function renderSong(state, barFn, bars, onProgress) {
+  const sr = 44100, barDur = 240 / state.bpm, tail = 3, dur = bars * barDur + tail + 0.2;
+  const ctx = new OfflineAudioContext(2, Math.ceil(dur * sr), sr);
+  const e = new Engine(() => state);
+  await e.init(ctx);
+  e.mode = 'song';
+  e.barFn = k => (k < bars ? barFn(k) : null);
+  e.start(0.1);
+  const CH = 0.5;
+  e.tick(CH + 0.2);
+  for (let t = CH; t < dur - 0.05; t += CH) {
+    ctx.suspend(t).then(() => {
+      if (e.playing) e.tick(t + CH + 0.2);
+      if (e.ended && e.playing) e.playing = false;
+      onProgress?.(t / dur);
+      ctx.resume();
+    });
+  }
+  const buf = await ctx.startRendering();
+  const n = buf.length, L = buf.getChannelData(0), R = buf.getChannelData(1), out = new Int16Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    out[2 * i] = Math.max(-1, Math.min(1, L[i])) * 32767;
+    out[2 * i + 1] = Math.max(-1, Math.min(1, R[i])) * 32767;
+  }
+  return { blob: wavBlob([out], n, sr, 2), sec: n / sr };
 }
 
 export function wavBlob(chunks, frames, sr, ch) {

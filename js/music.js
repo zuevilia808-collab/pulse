@@ -1,4 +1,5 @@
 // Музыкальная часть «Пульса»: лады, дорожки, паттерны, генераторы и жанры.
+import { SOUNDS, KITS } from './sounds.js';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const NOTE_RU = ['До', 'До-диез', 'Ре', 'Ми-бемоль', 'Ми', 'Фа', 'Фа-диез', 'Соль', 'Соль-диез', 'Ля', 'Си-бемоль', 'Си'];
@@ -50,27 +51,37 @@ export const TRACKS = [
 ];
 export const TRACK = Object.fromEntries(TRACKS.map(t => [t.id, t]));
 
-export const DEFAULT_PARAMS = {
-  kick: { vol: 0, tune: 46, decay: 0.42, drive: 0.25, click: 0.5 },
-  clap: { vol: -2, tone: 1200, decay: 0.22, rev: 0.22, dly: 0 },
-  hat: { vol: -4, tone: 8000, decay: 0.045, rev: 0.04, dly: 0 },
-  ohat: { vol: -6, tone: 7500, decay: 0.28, rev: 0.08, dly: 0 },
-  perc: { vol: -5, tune: 520, decay: 0.1, rev: 0.15, dly: 0.2 },
-  bass: { vol: -2, wave: 'sawtooth', cutoff: 420, res: 8, env: 0.5, decay: 0.22, drive: 0.35, rev: 0, dly: 0 },
-  stab: { vol: -5, cutoff: 1700, res: 2, decay: 0.22, rev: 0.3, dly: 0.4 },
-  lead: { vol: -6, wave: 'sawtooth', cutoff: 2400, res: 3, decay: 0.28, rev: 0.2, dly: 0.3 },
+// Громкость и посылы на эффекты; тембр берётся из звука (sounds.js), по умолчанию — из набора «Техно 909».
+const MIX = {
+  kick: { vol: 0, rev: 0, dly: 0, grit: 0, tone: 20000 },
+  clap: { vol: -2, rev: 0.22, dly: 0 },
+  hat: { vol: -4, rev: 0.04, dly: 0 },
+  ohat: { vol: -6, rev: 0.08, dly: 0 },
+  perc: { vol: -5, rev: 0.15, dly: 0.2 },
+  bass: { vol: -2, rev: 0, dly: 0 },
+  stab: { vol: -5, rev: 0.3, dly: 0.4 },
+  lead: { vol: -6, rev: 0.2, dly: 0.3 },
 };
+export const DEFAULT_SOUND = { ...KITS.techno.s };
+export const DEFAULT_PARAMS = Object.fromEntries(Object.keys(MIX).map(id => [id, { ...MIX[id], ...SOUNDS[id][DEFAULT_SOUND[id]].p }]));
+
+// Параметры дорожки после смены звука: громкость и эффекты остаются, тембр — от нового звука.
+export function soundParams(id, sound, prev) {
+  const keep = prev ? { vol: prev.vol, rev: prev.rev, dly: prev.dly } : {};
+  return { ...structuredClone(DEFAULT_PARAMS[id]), ...keep, ...structuredClone(SOUNDS[id][sound].p) };
+}
 
 export const emptySteps = id => Array(16).fill(TRACK[id].kind === 'drum' ? 0 : null);
 export const isEmpty = tr => !tr.steps.some(Boolean);
 
 export function emptyState() {
   const tracks = {};
-  for (const t of TRACKS) tracks[t.id] = { steps: emptySteps(t.id), mute: false, solo: false, variant: null, p: { ...DEFAULT_PARAMS[t.id] } };
+  for (const t of TRACKS) tracks[t.id] = { steps: emptySteps(t.id), mute: false, solo: false, variant: null, sound: DEFAULT_SOUND[t.id], p: structuredClone(DEFAULT_PARAMS[t.id]) };
   return {
     v: 1, bpm: 130, swing: 0, key: 9, scale: 'minor', genre: null, metronome: false,
     master: { vol: 0, cut: 20000, rumble: 0, delay: 0.55, reverb: 0.55 },
     tracks,
+    mode: 'loop', song: null, songMin: 3,
   };
 }
 
@@ -83,8 +94,13 @@ export function fixState(s) {
   for (const t of TRACKS) {
     const src = (s.tracks && s.tracks[t.id]) || {};
     const steps = Array.isArray(src.steps) && src.steps.length === 16 ? src.steps : base.tracks[t.id].steps;
-    out.tracks[t.id] = { steps, mute: !!src.mute, solo: !!src.solo, variant: src.variant || null, p: { ...DEFAULT_PARAMS[t.id], ...(src.p || {}) } };
+    const kit = KITS[GENRES[out.genre]?.kit];
+    const sound = SOUNDS[t.id][src.sound] ? src.sound : kit ? kit.s[t.id] : DEFAULT_SOUND[t.id];
+    out.tracks[t.id] = { steps, mute: !!src.mute, solo: !!src.solo, variant: src.variant || null, sound, p: { ...soundParams(t.id, sound), ...(src.p || {}) } };
   }
+  if (!out.song || !Array.isArray(out.song.sections) || !out.song.sections.length) out.song = null;
+  if (out.mode !== 'song' || !out.song) out.mode = 'loop';
+  out.songMin = Math.min(5, Math.max(1, Math.round((+out.songMin || 3) * 2) / 2));
   return out;
 }
 
@@ -111,12 +127,14 @@ const DRUMS = {
     broken: ['X..x..X...X..x..', 'X...X..x..X.x...', 'X..X..X...X.....', 'X...X...X..x.x..'],
     half: ['X.......X.......', 'X.........X.....'],
     gallop: ['X..xX...X..xX...', 'X...X..xX...X..x'],
+    trap: ['X.........X.....', 'X......X..X.....', 'X.........Xx....', 'X.....X...X..X..'],
   },
   clap: {
     back: ['....X.......X...'],
     every: ['X...X...X...X...'],
     sync: ['....X.......X..o', '....X..o....X...', '.......X....X...', '....X.....o.X...'],
     sparse: ['............X...'],
+    slow: ['........X.......', '........X......o', '........X..o....'],
   },
   hat: {
     off: ['..X...X...X...X.'],
@@ -124,6 +142,7 @@ const DRUMS = {
     six: ['oxXxoxXxoxXxoxXx', 'xoXoxoXoxoXoxoXx', 'ooXoooXoooXoooXo'],
     gallop: ['..Xx..Xx..Xx..Xx'],
     sparse: ['..x.......x.....'],
+    trap: ['x.x.x.x.x.ooo.x.', 'x.x.x.oox.x.x.oo', 'x.x.x.x.x.x.oooo', 'x.ooo.x.x.x.x.x.'],
   },
   ohat: {
     off: ['..X...X...X...X.'],
@@ -137,23 +156,25 @@ export const VARIANT_RU = {
   off: 'на офбит', eight: 'восьмые', six: 'шестнадцатые', three: 'гипнотичная тройка', gen: 'новый рисунок',
   acid: 'кислотный 303', rolling: 'катящийся', deep: 'глубокий', offbeat: 'на офбит',
   dub: 'даб с эхом', chords: 'ритмичные', arp: 'арпеджио', melody: 'новая линия',
+  trap: 'трэп-халфтайм', slow: 'медленная, на третью долю', 808: 'гудящий 808 с глайдами', pad: 'длинные мрачные аккорды',
 };
 
 export const VARIANTS = {
-  kick: ['four', 'broken', 'half', 'gallop'],
-  clap: ['back', 'every', 'sync', 'sparse'],
-  hat: ['off', 'eight', 'six', 'gallop', 'sparse'],
+  kick: ['four', 'broken', 'half', 'gallop', 'trap'],
+  clap: ['back', 'every', 'sync', 'sparse', 'slow'],
+  hat: ['off', 'eight', 'six', 'gallop', 'sparse', 'trap'],
   ohat: ['off', 'sparse'],
   perc: ['three', 'sync', 'sparse'],
-  bass: ['acid', 'rolling', 'deep', 'offbeat'],
-  stab: ['dub', 'chords', 'sparse'],
-  lead: ['arp', 'melody'],
+  bass: ['acid', 'rolling', 'deep', 'offbeat', '808'],
+  stab: ['dub', 'chords', 'sparse', 'pad'],
+  lead: ['arp', 'melody', 'slow'],
 };
 
 export function defaultVariant(id, genre) {
+  if (genre === 'witch') return { kick: 'trap', clap: 'slow', hat: 'trap', ohat: 'sparse', perc: 'sparse', bass: '808', stab: 'pad', lead: 'slow' }[id];
   if (id === 'bass') return genre === 'acid' ? 'acid' : genre === 'dub' || genre === 'minimal' ? 'deep' : 'rolling';
-  if (id === 'stab') return genre === 'detroit' ? 'chords' : 'dub';
-  if (id === 'lead') return 'arp';
+  if (id === 'stab') return genre === 'detroit' ? 'chords' : genre === 'melodic' ? 'pad' : 'dub';
+  if (id === 'lead') return genre === 'melodic' ? 'melody' : 'arp';
   return { kick: 'four', clap: 'back', hat: 'off', ohat: 'off', perc: 'gen' }[id];
 }
 
@@ -185,6 +206,15 @@ function genBass(v, scale) {
   } else if (v === 'deep') {
     for (const i of [2, 6, 10, 14]) s[i] = N(0, { len: 2 });
     if (rnd() < 0.6) s[14] = N(deg(scale, pick([4, -3, 2])), { len: 2 });
+  } else if (v === '808') {
+    // Длинные гудящие ноты с глайдами — как в трэпе и витч-хаусе.
+    const motif = pick([
+      [[0, 0, 6], [6, -2, 4, true], [10, 0, 6]],
+      [[0, 0, 7], [7, 3, 3, true], [10, 0, 6]],
+      [[0, 0, 4], [6, 0, 2], [10, -2, 3, true], [13, -1, 3, true]],
+      [[0, 0, 10], [10, 4, 3, true], [13, 0, 3]],
+    ]);
+    for (const [i, d, len, slide] of motif) s[i] = N(deg(scale, d), { len, slide: !!slide });
   } else {
     for (const i of [2, 6, 10, 14]) s[i] = N(0);
     if (rnd() < 0.5) s[10] = N(12);
@@ -198,6 +228,12 @@ function genStab(v, scale) {
     chords: ['..x..x....x..x..', 'x..x..x...x..x..', '..x..x..x.....x.'],
     sparse: ['..........x.....', '...x............'],
   };
+  if (v === 'pad') {
+    const s = Array(16).fill(null);
+    s[0] = N(0, { len: 8 });
+    s[8] = N(pick([deg(scale, -2), deg(scale, 3), deg(scale, 1), deg(scale, -3)]), { len: 8 });
+    return s;
+  }
   const p = pick(lib[v] || lib.dub), s = Array(16).fill(null);
   const alt = pick([deg(scale, 3), deg(scale, -2), deg(scale, 4) - 12]);
   let k = 0;
@@ -211,6 +247,12 @@ function genStab(v, scale) {
 
 function genLead(v, scale) {
   const s = Array(16).fill(null);
+  if (v === 'slow') {
+    // Редкая жутковатая линия: длинные ноты высоко, с полутоном сверху.
+    const line = pick([[[0, 7, 3], [4, 8, 2], [8, 4, 4], [12, 7, 3]], [[0, 4, 4], [6, 5, 2], [8, 3, 6]], [[2, 7, 2], [4, 8, 4], [10, 7, 2], [12, 4, 4]]]);
+    for (const [i, d, len] of line) s[i] = N(deg(scale, d), { len });
+    return s;
+  }
   if (v === 'melody') {
     let d = 0;
     for (let i = 0; i < 16; i++) {
@@ -288,49 +330,54 @@ export function sparser(id, steps) {
 
 export const GENRES = {
   peak: {
-    name: 'Пик-тайм техно', bpm: 132, rumble: 0.35,
+    name: 'Пик-тайм техно', bpm: 132, rumble: 0.35, kit: 'techno',
     pat: { kick: 'four', clap: 'back', hat: 'off', perc: 'sync', bass: 'rolling' },
-    p: { kick: { drive: 0.35 }, bass: { wave: 'sawtooth', cutoff: 320, res: 4, env: 0.3, decay: 0.12, drive: 0.35 } },
+    p: { kick: { drive: 0.35 } },
   },
   acid: {
-    name: 'Эсид-техно', bpm: 136, rumble: 0.2,
+    name: 'Эсид-техно', bpm: 136, rumble: 0.2, kit: 'acid',
     pat: { kick: 'four', clap: 'back', hat: 'six', ohat: 'off', bass: 'acid' },
-    p: { bass: { wave: 'sawtooth', cutoff: 360, res: 15, env: 0.8, decay: 0.22, drive: 0.5 }, ohat: { vol: -10 } },
+    p: { bass: { cutoff: 360, res: 15, env: 0.8, drive: 0.5 }, ohat: { vol: -10 } },
   },
   minimal: {
-    name: 'Минимал', bpm: 126, swing: 0.2,
+    name: 'Минимал', bpm: 126, swing: 0.2, kit: 'minimal',
     pat: { kick: 'four', hat: 'six', perc: 'sync', bass: 'deep', stab: 'sparse' },
-    p: { kick: { decay: 0.3, drive: 0.1 }, hat: { vol: -10, decay: 0.03 }, bass: { wave: 'square', cutoff: 240, res: 2, env: 0.15 } },
+    p: { hat: { vol: -10 }, bass: { cutoff: 240, res: 2, env: 0.15 } },
   },
   industrial: {
-    name: 'Индастриал', bpm: 142, rumble: 0.8,
+    name: 'Индастриал', bpm: 142, rumble: 0.8, kit: 'industrial',
     pat: { kick: 'four', clap: 'back', hat: 'six', perc: 'three' },
-    p: { kick: { drive: 0.9, decay: 0.5, tune: 44, click: 0.8 }, clap: { rev: 0.5, tone: 1500 }, perc: { dly: 0.3, tune: 900 } },
+    p: { perc: { dly: 0.3 } },
   },
   dub: {
-    name: 'Даб-техно', bpm: 122, swing: 0.06, rumble: 0.2,
+    name: 'Даб-техно', bpm: 122, swing: 0.06, rumble: 0.2, kit: 'dub',
     pat: { kick: 'four', hat: 'off', stab: 'dub', bass: 'deep' },
-    p: { kick: { drive: 0.12, decay: 0.38 }, hat: { vol: -9 }, stab: { dly: 0.65, rev: 0.55, cutoff: 1200, decay: 0.18 }, bass: { wave: 'sine', cutoff: 220, res: 1, env: 0.1 } },
+    p: { kick: { decay: 0.38 }, hat: { vol: -9 }, stab: { dly: 0.65, rev: 0.55, cutoff: 1200, decay: 0.18 } },
   },
   detroit: {
-    name: 'Детройт', bpm: 128, swing: 0.14,
+    name: 'Детройт', bpm: 128, swing: 0.14, kit: 'detroit',
     pat: { kick: 'four', clap: 'back', hat: 'six', ohat: 'off', bass: 'rolling', stab: 'chords' },
-    p: { stab: { cutoff: 2200, dly: 0.25 }, ohat: { vol: -10 } },
+    p: { stab: { dly: 0.25 }, ohat: { vol: -10 } },
   },
   melodic: {
-    name: 'Мелодик-техно', bpm: 124, rumble: 0.15,
-    pat: { kick: 'four', clap: 'back', hat: 'off', ohat: 'sparse', bass: 'rolling', lead: 'arp' },
-    p: { lead: { dly: 0.45, rev: 0.45, cutoff: 3000 }, bass: { cutoff: 280, res: 3, env: 0.25 } },
+    name: 'Мелодик-техно', bpm: 124, rumble: 0.15, kit: 'melodic',
+    pat: { kick: 'four', clap: 'back', hat: 'off', ohat: 'sparse', bass: 'rolling', stab: 'pad', lead: 'arp' },
+    p: { lead: { dly: 0.45, rev: 0.45 }, stab: { rev: 0.5, vol: -9 }, bass: { cutoff: 280, res: 3, env: 0.25 } },
   },
   hypnotic: {
-    name: 'Гипнотик', bpm: 130, rumble: 0.75,
+    name: 'Гипнотик', bpm: 130, rumble: 0.75, kit: 'hypnotic',
     pat: { kick: 'four', hat: 'six', perc: 'three', ohat: 'sparse' },
-    p: { perc: { dly: 0.4, rev: 0.3, tune: 700 }, hat: { vol: -8 } },
+    p: { perc: { dly: 0.4, rev: 0.3 }, hat: { vol: -8 } },
   },
   hard: {
-    name: 'Хард-техно', bpm: 150, rumble: 0.5,
+    name: 'Хард-техно', bpm: 150, rumble: 0.5, kit: 'hard',
     pat: { kick: 'four', clap: 'back', hat: 'six', ohat: 'off', bass: 'rolling' },
-    p: { kick: { drive: 1, decay: 0.34 }, clap: { rev: 0.35 }, bass: { drive: 0.6 } },
+    p: { clap: { rev: 0.35 } },
+  },
+  witch: {
+    name: 'Witch House', bpm: 140, rumble: 0.1, kit: 'witch', reverb: 0.95, delay: 0.7, feel: 'халфтайм, ощущается как 70',
+    pat: { kick: 'trap', clap: 'slow', hat: 'trap', ohat: 'sparse', perc: 'sparse', bass: '808', stab: 'pad', lead: 'slow' },
+    p: { hat: { vol: -7 }, ohat: { vol: -10 }, perc: { dly: 0.45, vol: -8 }, bass: { vol: 0 }, stab: { rev: 0.6, dly: 0.25, vol: -7 }, lead: { rev: 0.65, dly: 0.45, vol: -8 } },
   },
 };
 export const GENRE_IDS = Object.keys(GENRES);
@@ -343,9 +390,13 @@ export function genreState(state, id) {
   st.genre = id;
   st.master.rumble = g.rumble || 0;
   st.master.cut = 20000;
+  st.master.reverb = g.reverb ?? 0.55;
+  st.master.delay = g.delay ?? 0.55;
+  const kit = KITS[g.kit || 'techno'];
   for (const t of TRACKS) {
     const tr = st.tracks[t.id];
-    tr.p = { ...DEFAULT_PARAMS[t.id], ...((g.p && g.p[t.id]) || {}) };
+    tr.sound = kit.s[t.id];
+    tr.p = { ...soundParams(t.id, tr.sound), ...structuredClone((g.p && g.p[t.id]) || {}) };
     tr.mute = false;
     tr.solo = false;
     const v = g.pat[t.id];

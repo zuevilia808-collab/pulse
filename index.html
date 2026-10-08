@@ -22,6 +22,10 @@
   <symbol id="i-drum" viewBox="0 0 24 24"><ellipse cx="12" cy="8" rx="8" ry="3"/><path d="M4 8v8c0 1.7 3.6 3 8 3s8-1.3 8-3V8M8 10.6v8M16 10.6v8M15 2l-3 6"/></symbol>
   <symbol id="i-phones" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
 </svg>
 
 <div class="app">
@@ -44,48 +48,74 @@
         <select id="keySel" aria-label="Тоника"></select>
         <select id="scaleSel" aria-label="Лад"></select>
       </div>
-      <button id="recBtn" class="btn rec" title="Записать всё, что играет, в WAV"><span class="dot"></span><span class="lbl">Запись трека</span></button>
+      <button id="recBtn" class="btn rec" title="Записать всё, что звучит, в WAV"><span class="dot"></span><span class="lbl">Запись</span></button>
       <button id="undoBtn" class="btn icon" title="Отменить (Ctrl+Z)"><svg><use href="#i-undo"/></svg></button>
       <button id="helpBtn" class="btn ghost"><svg><use href="#i-help"/></svg><span>Что сказать?</span></button>
     </div>
   </header>
 
   <main class="main">
-    <div class="col">
-      <section class="card stage">
-        <canvas id="viz"></canvas>
-        <div class="stage-in">
-          <div class="voice">
-            <button id="micBtn" class="mic" aria-label="Слушать голосовые команды">
-              <span class="ring"></span><span class="ring r2"></span>
-              <svg><use href="#i-mic"/></svg>
-            </button>
-            <div class="speech">
-              <div id="vStatus" class="vstatus">Нажми на микрофон и скажи, что сыграть</div>
-              <div id="heard" class="heard"><span class="final"></span><span class="interim"></span></div>
-              <div id="did" class="did"></div>
-            </div>
+    <section class="card stage">
+      <canvas id="viz"></canvas>
+      <div class="stage-in">
+        <div class="voice">
+          <button id="micBtn" class="mic" aria-label="Слушать голосовые команды">
+            <span class="ring"></span><span class="ring r2"></span>
+            <svg><use href="#i-mic"/></svg>
+          </button>
+          <div class="speech">
+            <div id="vStatus" class="vstatus">Нажми на микрофон и скажи, что сыграть</div>
+            <div id="heard" class="heard"><span class="final"></span><span class="interim"></span></div>
+            <div id="did" class="did"></div>
           </div>
-          <form id="typeForm" class="typer">
-            <input id="typeIn" autocomplete="off" placeholder="…или напиши команду: «добавь бочку и хэты на офбит»">
-            <button class="btn icon lime" title="Выполнить" aria-label="Выполнить"><svg><use href="#i-send"/></svg></button>
-          </form>
-          <div id="chips" class="chips"></div>
         </div>
-      </section>
+        <form id="typeForm" class="typer">
+          <input id="typeIn" autocomplete="off" placeholder="…или напиши команду: «добавь бочку и хэты на офбит»">
+          <button class="btn icon lime" title="Выполнить" aria-label="Выполнить"><svg><use href="#i-send"/></svg></button>
+        </form>
+        <div id="pairs" class="pairs"></div>
+        <div id="chips" class="chips"></div>
+      </div>
+    </section>
 
-      <section class="card seq">
-        <div class="card-h">
-          <h2>Паттерн</h2><span class="sub">1 такт · 16 шагов</span>
-          <span class="spacer"></span><span id="genreTag" class="tag" hidden></span>
-        </div>
-        <div class="grid-wrap"><div id="grid" class="grid"></div></div>
-        <div id="emptyHint" class="empty-hint">Скажи <b>«сделай техно»</b> — или собирай по частям: <b>«добавь бочку»</b>, <b>«хэты на офбит»</b>, <b>«кислотный бас»</b></div>
-        <div class="seq-foot">Клик по клетке — поставить или убрать удар. Колесо мыши на ноте — выше/ниже. Shift+клик — акцент, Alt+клик — глайд у баса.</div>
-      </section>
-    </div>
+    <section class="card seq">
+      <div class="card-h">
+        <h2>Паттерн</h2><span class="sub">1 такт · 16 шагов</span>
+        <span class="spacer"></span><span id="genreTag" class="tag" hidden></span>
+      </div>
+      <div class="grid-wrap"><div id="grid" class="grid"></div></div>
+      <div id="emptyHint" class="empty-hint">Скажи <b>«сделай техно»</b> — или собирай по частям: <b>«добавь бочку»</b>, <b>«хэты на офбит»</b>, <b>«кислотный бас»</b></div>
+      <div class="seq-foot">Нажми на клетку — поставить или убрать удар. <b>Удержи</b> ноту (или правая кнопка мыши) — выбрать ноту, акцент, глайд и длину. Нажми на название дорожки — выбрать звук. S — соло, можно у нескольких.</div>
+    </section>
 
-    <aside class="col side">
+    <section class="card sound">
+      <div class="card-h"><h2>Звук</h2><span id="kitSub" class="sub"></span></div>
+      <div class="sound-in">
+        <div class="lbl">Набор звуков под жанр</div>
+        <div id="kits" class="kits"></div>
+        <div class="lbl">Звук каждого инструмента — нажми, чтобы выбрать и послушать</div>
+        <div id="voices" class="voices"></div>
+        <div id="knobs" class="knobs"></div>
+      </div>
+    </section>
+
+    <section class="card song">
+      <div class="card-h">
+        <h2>Трек</h2><span id="songSub" class="sub"></span>
+        <span class="spacer"></span>
+        <div id="modeSeg" class="seg mode"><button data-m="loop">Петля</button><button data-m="song">Весь трек</button></div>
+      </div>
+      <div class="song-tools">
+        <div id="lenSeg" class="pill lenp" title="Длина трека"><button data-d="-1" aria-label="Короче">−</button><b id="lenVal">3 мин</b><button data-d="1" aria-label="Длиннее">+</button></div>
+        <button id="writeBtn" class="btn lime"><svg><use href="#i-spark"/></svg><span>Сочинить трек</span></button>
+        <button id="renderBtn" class="btn" hidden><svg><use href="#i-save"/></svg><span>Сохранить WAV</span></button>
+      </div>
+      <div id="songEmpty" class="empty-hint">Нажми <b>«Сочинить трек»</b> или скажи <b>«напиши трек на 3 минуты»</b>. Я разложу паттерн на интро, набор, брейк, подъём, дроп и аутро по сценарию жанра. Потом всё можно поправить: длину частей, переходы, гармонию и кто где играет.</div>
+      <div class="song-wrap"><div id="songTl" class="song-tl" hidden></div></div>
+      <div class="seq-foot">Нажми на часть — длина, переходы, фильтр и гармония. Клетка — включить или выключить инструмент в этой части, <b>удержание</b> — легко, полностью или плотно. Сверху — график энергии трека.</div>
+    </section>
+
+    <div class="duo">
       <section class="card capture">
         <div class="card-h"><h2>Голос → ноты</h2></div>
         <div class="cap">
@@ -107,16 +137,11 @@
         </label>
       </section>
 
-      <section class="card sound">
-        <div class="card-h"><h2>Звук</h2></div>
-        <div id="knobs" class="knobs"></div>
-      </section>
-
       <section class="card logc">
         <div class="card-h"><h2>Что я понял</h2></div>
         <ol id="log" class="log"></ol>
       </section>
-    </aside>
+    </div>
   </main>
 
   <footer class="foot">Голосовые команды распознаёт Google Chrome (нужен интернет). Звук, ноты и битбокс работают прямо на компьютере.</footer>

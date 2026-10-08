@@ -1,9 +1,11 @@
 // «Пульс» — техно голосом. Связывает голос, команды, движок и интерфейс.
 import {
   TRACKS, TRACK, emptyState, fixState, keyLabel, noteName, isEmpty, makePattern, denser, sparser, genreState,
-  GENRES, GENRE_IDS, defaultVariant, VARIANT_RU, VARIANTS, emptySteps, NOTE_RU, SCALE_RU, snap, covered, semiToDeg, deg, pick,
+  GENRES, GENRE_IDS, defaultVariant, VARIANT_RU, VARIANTS, emptySteps, NOTE_RU, SCALE_RU, snap, covered, semiToDeg, deg, pick, soundParams,
 } from './music.js';
-import { Engine } from './engine.js';
+import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js';
+import { PART, INS, OUTS, FILTERS, PROGS, LANES, SCRIPTS, writeSong, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js';
+import { Engine, renderSong } from './engine.js';
 import { parse, normalize, QUICK } from './commands.js';
 import { Voice } from './voice.js';
 import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js';
@@ -13,14 +15,21 @@ const STORE = 'pulse.state.v1';
 const $ = s => document.querySelector(s);
 const NAME = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Открытый хэт', perc: 'Перкуссия', bass: 'Бас', stab: 'Аккорды', lead: 'Мелодия', rumble: 'Румбл' };
 const ACC = { kick: 'бочку', clap: 'клэп', hat: 'хэт', ohat: 'открытый хэт', perc: 'перкуссию', bass: 'бас', stab: 'аккорды', lead: 'мелодию', rumble: 'румбл' };
-const OTHER = { kick: 'другую бочку', clap: 'другой клэп', hat: 'другие хэты', ohat: 'другой открытый хэт', perc: 'другую перкуссию', bass: 'новый бас', stab: 'другие аккорды', lead: 'новую мелодию' };
-const DECAY = { kick: [0.15, 1.2], clap: [0.08, 0.8], hat: [0.02, 0.2], ohat: [0.1, 0.9], perc: [0.04, 0.6], bass: [0.05, 0.8], stab: [0.08, 1], lead: [0.08, 1] };
+const OTHER = { kick: 'другую бочку', clap: 'другой клэп', hat: 'другой хэт', ohat: 'другой открытый хэт', perc: 'другую перкуссию', bass: 'другой бас', stab: 'другие аккорды', lead: 'другой синт' };
+const NEWPAT = { kick: 'новый ритм бочки', clap: 'новый ритм клэпа', hat: 'новый ритм хэтов', ohat: 'новый ритм открытого хэта', perc: 'новую перкуссию', bass: 'новый бас', stab: 'новые аккорды', lead: 'новую мелодию' };
+const DECAY = { kick: [0.15, 1.8], clap: [0.04, 0.8], hat: [0.02, 0.2], ohat: [0.1, 1.2], perc: [0.04, 0.8], bass: [0.05, 0.8], stab: [0.05, 1.6], lead: [0.08, 1.2] };
+const SHORT = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Откр. хэт', perc: 'Перк.', bass: 'Бас', stab: 'Аккорды', lead: 'Мелодия' };
+const LENS = [1, 1.5, 2, 3, 4, 5];
+const MOBILE = navigator.userAgentData?.mobile ?? (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1));
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const pct = v => Math.round(v * 100) + '%';
 const hz = v => (v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + ' кГц' : Math.round(v) + ' Гц');
 const dbs = v => (v > 0 ? '+' : '') + Math.round(v) + ' дБ';
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
 const names = ids => ids.map(i => NAME[i].toLowerCase()).join(', ');
+const fmtTime = sec => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+const fmtMin = m => `${String(m).replace('.', ',')} мин`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 let state = load();
 const undoStack = [];
@@ -30,10 +39,10 @@ let viz, voice;
 let breakSet = null, breakRumble = 0;
 let humTarget = 'bass';
 let taking = null;
-let recording = false, recStartedAt = 0;
-const stepQ = [];
+let recording = false, recStartedAt = 0, rendering = false;
+const stepQ = [], songQ = [];
 const rows = {};
-let playhead = -1;
+let playhead = -1, songAt = -1;
 const pendingMute = new Set(); // «убери» ждёт начала доли; «верни» до этого момента его отменяет
 
 // ——— Хранение и отмена ———
@@ -53,17 +62,25 @@ function undo() {
   const s = undoStack.pop();
   if (!s) return false;
   state = fixState(JSON.parse(s));
+  engine.setMode(state.mode);
   breakSet = null;
   return true;
 }
+function commit() { engine.applyParams(); save(); render(); }
 
 const isAllEmpty = () => TRACKS.every(t => isEmpty(state.tracks[t.id])) && !state.master.rumble;
 
 async function ensureAudio() { await engine.init(); }
 function play() { if (!engine.ctx) return; engine.start(); renderTransport(); }
 function stop() {
+  // В режиме трека следующий запуск начнётся с начала текущей части.
+  if (state.song && state.mode === 'song' && songAt >= 0) {
+    const L = locate(state.song, songAt);
+    engine.songPos = L ? sectionStart(state.song, L.i) : 0;
+  }
   engine.stop();
   stepQ.length = 0;
+  songQ.length = 0;
   setPlayhead(-1);
   renderTransport();
 }
@@ -87,6 +104,16 @@ function setPattern(id, variant) {
   const tr = state.tracks[id];
   tr.steps = makePattern(id, variant, state.scale);
   tr.variant = variant;
+}
+
+function setSound(id, sid) {
+  const tr = state.tracks[id];
+  tr.sound = sid;
+  tr.p = soundParams(id, sid, tr.p);
+}
+
+function applyKit(kid) {
+  for (const id of LANES) setSound(id, KITS[kid].s[id]);
 }
 
 function ensureTrack(id) {
@@ -116,9 +143,93 @@ function doDrop(t) {
   engine.impact(t);
 }
 
+// ——— Трек целиком ———
+function startSongAt(bar) {
+  state.mode = 'song';
+  engine.setMode('song');
+  if (engine.playing) engine.seek(bar);
+  else { engine.songPos = bar; engine.seekTo = null; play(); }
+}
+
+function composeSong(minutes) {
+  const min = clamp(minutes || state.songMin || 3, 1, 5);
+  state.songMin = min;
+  if (isAllEmpty()) state = genreState(state, state.genre || 'peak');
+  const genre = state.genre;
+  state.song = writeSong(state, min, genre);
+  // Дорожки, которые нужны сценарию, но пока пустые, — сочиняем.
+  for (const id of LANES) {
+    const tr = state.tracks[id];
+    if (isEmpty(tr) && state.song.sections.some(s => s.lv[id])) setPattern(id, SOUNDS[id][tr.sound].v || defaultVariant(id, genre));
+  }
+  for (const t of TRACKS) { state.tracks[t.id].mute = false; state.tracks[t.id].solo = false; }
+  breakSet = null;
+  startSongAt(0);
+  const secs = state.song.sections;
+  return `Сочинил трек на ${fmtTime(songBars(state.song) * barSec(state.bpm))}: ${secs.map(s => PART[s.type].name.toLowerCase()).join(' → ')}`;
+}
+
+function setMode(mode) {
+  if (mode === 'song' && !state.song) return composeSong(state.songMin);
+  if (mode === state.mode) return mode === 'song' ? 'Уже играю весь трек' : 'Уже играю петлю';
+  if (mode === 'song') {
+    startSongAt(0);
+    return 'Играю весь трек по частям';
+  }
+  state.mode = 'loop';
+  engine.setMode('loop');
+  return 'Режим петли: один такт по кругу';
+}
+
+// Перейти к ближайшей части нужного типа (брейк, дроп…) в режиме трека.
+function jumpTo(types) {
+  const secs = state.song.sections, L = locate(state.song, Math.max(0, songAt));
+  const from = L ? L.i + 1 : 0;
+  let i = secs.findIndex((s, k) => k >= from && types.includes(s.type));
+  if (i < 0) i = secs.findIndex(s => types.includes(s.type));
+  if (i < 0) return null;
+  startSongAt(sectionStart(state.song, i));
+  return `Перехожу к части «${PART[secs[i].type].name}»`;
+}
+
+async function saveSongWav() {
+  if (rendering) return 'Уже сохраняю трек';
+  if (!state.song) return 'Сначала сочини трек — скажи «напиши трек на 3 минуты»';
+  rendering = true;
+  const snap = structuredClone(state), bars = songBars(snap.song), btn = $('#renderBtn'), lbl = btn.querySelector('span');
+  btn.disabled = true;
+  try {
+    const res = await renderSong(snap, k => barData(snap, k), bars, p => { lbl.textContent = `Сохраняю… ${Math.round(p * 100)}%`; });
+    const name = download(res.blob, 'pulse-track');
+    toast(`Сохранил ${name} в «Загрузки»`, 'ok');
+    return `Сохранил трек ${fmtTime(res.sec)} в файл ${name}`;
+  } catch (e) {
+    console.error(e);
+    return 'Не получилось сохранить трек: ' + e.message;
+  } finally {
+    rendering = false;
+    btn.disabled = false;
+    lbl.textContent = 'Сохранить WAV';
+  }
+}
+
+function download(blob, prefix) {
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  const name = `${prefix}-${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}.wav`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return name;
+}
+
 // ——— Выполнение действий ———
 async function exec(a) {
   const T = state.tracks;
+  const song = state.mode === 'song' && state.song;
   switch (a.type) {
     case 'help': openHelp(); return 'Открыл список команд';
     case 'undo': return undo() ? 'Отменил последнее изменение' : 'Отменять нечего';
@@ -127,14 +238,40 @@ async function exec(a) {
       stop();
       state = emptyState();
       Object.assign(state, { bpm, key, scale });
+      engine.setMode('loop');
       breakSet = null;
       return 'Чистый лист. Скажи «сделай техно» или «добавь бочку»';
     }
     case 'genre': {
-      const id = a.id || pick(GENRE_IDS.filter(g => g !== state.genre));
+      const id = a.id || pick(GENRE_IDS.filter(g => g !== state.genre && g !== 'witch'));
+      const g = GENRES[id];
       at('bar', () => { state = genreState(state, id); breakSet = null; });
       play();
-      return `${GENRES[id].name} · ${GENRES[id].bpm} BPM`;
+      return `${g.name} · ${g.bpm} BPM${g.feel ? ` (${g.feel})` : ''} · звуки «${KITS[g.kit].name}»`;
+    }
+    case 'song': return composeSong(a.minutes);
+    case 'mode': return setMode(a.mode);
+    case 'seek':
+      if (!state.song) return 'Трек ещё не сочинён — скажи «напиши трек»';
+      startSongAt(a.bar || 0);
+      return 'Играю трек с начала';
+    case 'kit':
+      applyKit(a.id);
+      if (!engine.playing) setTimeout(() => engine.preview('kick'), 30);
+      return `Набор «${KITS[a.id].name}» — ${KITS[a.id].desc}`;
+    case 'sound': {
+      const ids = tl(a.tracks).filter(id => SOUNDS[id]);
+      const out = [];
+      for (const id of ids) {
+        const tr = T[id], list = Object.keys(SOUNDS[id]);
+        const sid = a.name && SOUNDS[id][a.name] ? a.name : list[(list.indexOf(tr.sound) + 1) % list.length];
+        setSound(id, sid);
+        if (isEmpty(tr)) { setPattern(id, SOUNDS[id][sid].v || defaultVariant(id, state.genre)); tr.mute = false; play(); }
+        out.push(`${NAME[id]}: звук «${SOUNDS[id][sid].name}» — ${SOUNDS[id][sid].desc}`);
+      }
+      if (ids.length === 1 && !engine.playing) setTimeout(() => engine.preview(ids[0]), 30);
+      if (ids.length === 1) out.push(`рисунок поменяет «${NEWPAT[ids[0]]}»`);
+      return out.join(' · ');
     }
     case 'play':
       if (engine.playing) return 'Уже играет';
@@ -182,8 +319,8 @@ async function exec(a) {
     case 'acid': {
       const b = T.bass;
       if (a.dir > 0 && isEmpty(b)) {
+        setSound('bass', 'b303');
         setPattern('bass', 'acid');
-        Object.assign(b.p, { wave: 'sawtooth', res: 14, env: 0.75, cutoff: 380, decay: 0.22, drive: 0.45 });
         b.mute = false;
         play();
         return 'Кислотный бас 303';
@@ -274,8 +411,13 @@ async function exec(a) {
       const ids = tl(a.tracks).filter(id => T[id]);
       if (!ids.length) return '';
       ids.forEach(ensureTrack);
-      at('beat', () => { for (const t of TRACKS) state.tracks[t.id].solo = ids.includes(t.id); });
-      return `Только ${names(ids)}`;
+      at('beat', () => {
+        for (const t of TRACKS) {
+          const tr = state.tracks[t.id];
+          tr.solo = ids.includes(t.id) || (a.add && tr.solo);
+        }
+      });
+      return a.add ? `Соло: ещё ${names(ids)}` : `Только ${names(ids)}`;
     }
     case 'unmuteAll':
       pendingMute.clear();
@@ -339,7 +481,12 @@ async function exec(a) {
           continue;
         }
         if (!T[id]) continue;
-        if (isEmpty(T[id])) { ensureTrack(id); out.push(`${NAME[id]} добавлен`); continue; }
+        if (isEmpty(T[id])) {
+          if (a.dir < 0) { out.push(`${NAME[id]} и так молчит`); continue; }
+          ensureTrack(id);
+          out.push(`${NAME[id]} добавлен`);
+          continue;
+        }
         T[id].steps = a.dir > 0 ? denser(id, T[id].steps) : sparser(id, T[id].steps);
         T[id].mute = false;
         out.push(`${NAME[id]} ${a.dir > 0 ? 'плотнее' : 'проще'}`);
@@ -372,11 +519,12 @@ async function exec(a) {
         } else if (v || isEmpty(tr)) {
           const vv = v || defaultVariant(id, state.genre);
           setPattern(id, vv);
-          if (id === 'bass' && vv === 'acid') Object.assign(tr.p, { wave: 'sawtooth', res: Math.max(tr.p.res, 13), env: Math.max(tr.p.env, 0.7), drive: Math.max(tr.p.drive, 0.4) });
+          if (id === 'bass' && vv === 'acid' && !SOUNDS.bass[tr.sound].v) setSound('bass', 'b303');
+          if (id === 'bass' && vv === '808') setSound('bass', 'b808');
           if (id === 'bass' && vv === 'deep') Object.assign(tr.p, { res: Math.min(tr.p.res, 3), env: Math.min(tr.p.env, 0.2), cutoff: Math.min(tr.p.cutoff, 300) });
           out.push(`${NAME[id]} — ${VARIANT_RU[vv] || 'новый рисунок'}`);
         } else if (wasMuted) out.push(`${NAME[id]} снова играет`);
-        else out.push(`${NAME[id]} уже играет — скажи «${OTHER[id]}», чтобы поменять`);
+        else out.push(`${NAME[id]} уже играет — скажи «${NEWPAT[id]}» или «${OTHER[id]}»`);
         tr.mute = false;
       }
       if (TRACKS.some(t => T[t.id].solo) && !ids.every(id => T[id] && T[id].solo)) for (const t of TRACKS) T[t.id].solo = false;
@@ -385,10 +533,12 @@ async function exec(a) {
     }
     case 'build':
       if (isAllEmpty()) return 'Сначала нужен бит — скажи «сделай техно»';
+      if (song) return jumpTo(['rise']) || 'В треке нет подъёма';
       play();
       at('bar', t => engine.startBuild(t, 2));
       return 'Нарастание 2 такта, потом дроп';
     case 'break':
+      if (song) return jumpTo(['break', 'pit']) || 'В треке нет брейка';
       if (!engine.playing) return 'Брейк делается во время игры — скажи «поехали»';
       at('bar', () => {
         breakSet = ['kick', 'bass'].filter(id => !state.tracks[id].mute && !isEmpty(state.tracks[id]));
@@ -399,6 +549,7 @@ async function exec(a) {
       });
       return 'Брейк: бочка и бас ушли. Скажи «дроп»';
     case 'drop':
+      if (song) return jumpTo(['drop']) || 'В треке нет дропа';
       play();
       at('bar', t => doDrop(t));
       return 'Дроп!';
@@ -412,7 +563,7 @@ async function exec(a) {
       takeVoice('beatbox');
       return '';
     case 'recStart': return startRec();
-    case 'recStop': return stopRec();
+    case 'recStop': return !recording && state.song ? saveSongWav() : stopRec();
   }
   return '';
 }
@@ -431,7 +582,7 @@ async function runText(raw, src = 'text', alts = null) {
     return false;
   }
   await ensureAudio();
-  const quiet = ['help', 'undo', 'play', 'stop', 'hum', 'beatbox', 'recStart', 'recStop', 'metro'];
+  const quiet = ['help', 'undo', 'play', 'stop', 'hum', 'beatbox', 'recStart', 'recStop', 'metro', 'seek'];
   if (parsed.actions.some(a => !quiet.includes(a.type))) pushUndo();
   const out = [];
   for (const a of parsed.actions) {
@@ -443,12 +594,19 @@ async function runText(raw, src = 'text', alts = null) {
       out.push('Ошибка: ' + e.message);
     }
   }
-  engine.applyParams();
-  save();
-  render();
+  commit();
   const msg = out.join(' · ');
-  if (msg) { setDid(msg); log(used, msg, true); }
+  if (msg) { setDid(msg); if (src !== 'pair') log(used, msg, true); }
   return true;
+}
+
+// Действие из интерфейса (кнопки трека, звуков).
+async function act(a, label) {
+  await ensureAudio();
+  pushUndo();
+  const r = await exec(a);
+  commit();
+  if (r) { setDid(r); log(label, r, true); }
 }
 
 // ——— Голос → ноты ———
@@ -459,13 +617,15 @@ async function takeVoice(kind, target = 'bass') {
   let resumed = false;
   try {
     await ensureAudio();
+    voice.pause(); // на телефоне микрофон нельзя делить с распознаванием речи
     try {
       await mic.ensure();
-    } catch {
-      toast('Нет доступа к микрофону. Нажми на значок слева от адреса → Микрофон → Разрешить', 'err');
+    } catch (e) {
+      micDenied(e);
+      toast('Нет доступа к микрофону — подробности под кнопкой микрофона', 'err');
       return;
     }
-    voice.pause();
+    if (state.mode === 'song') { state.mode = 'loop'; engine.setMode('loop'); renderSongCard(); }
     const ctx = engine.ctx;
     play();
     const sd = 60 / state.bpm / 4, bar = sd * 16;
@@ -507,17 +667,19 @@ async function takeVoice(kind, target = 'bass') {
       }
       msg = `Битбокс → ${parts.join(', ')}`;
     }
-    engine.applyParams();
-    save();
-    render();
+    commit();
     takeResult(msg, true);
     setDid(msg);
     log(kind === 'hum' ? 'напето голосом' : 'битбокс', msg, true);
+    if (MOBILE) mic.release();
     voice.resume();
     resumed = true;
   } finally {
     taking = null;
-    if (!resumed) voice.resume();
+    if (!resumed) {
+      if (MOBILE) mic.release();
+      voice.resume();
+    }
   }
 }
 
@@ -573,7 +735,7 @@ function takeResult(msg, ok) {
 }
 function hideTake() { $('#take').hidden = true; }
 
-// ——— Запись трека ———
+// ——— Запись того, что звучит ———
 async function startRec() {
   if (recording) return 'Запись уже идёт';
   await ensureAudio();
@@ -582,7 +744,7 @@ async function startRec() {
   recStartedAt = performance.now();
   play();
   renderTransport();
-  return 'Запись трека пошла. Скажи «сохрани», когда хватит';
+  return 'Запись пошла. Скажи «стоп запись», когда хватит';
 }
 async function stopRec() {
   if (!recording) return 'Запись не идёт. Скажи «начни запись»';
@@ -590,19 +752,10 @@ async function stopRec() {
   const res = await engine.recStop();
   renderTransport();
   if (!res || res.sec < 0.3) return 'Запись пустая';
-  const d = new Date(), z = n => String(n).padStart(2, '0');
-  const name = `pulse-${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}-${z(d.getMinutes())}.wav`;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(res.blob);
-  a.download = name;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  const name = download(res.blob, 'pulse');
   toast(`Сохранил ${name} в «Загрузки»`, 'ok');
   return `Сохранил ${fmtTime(res.sec)} в файл ${name}`;
 }
-const fmtTime = sec => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
 // ——— Интерфейс ———
 const KNOBS = [
@@ -619,17 +772,33 @@ const KNOBS = [
 const toPos = (k, v) => Math.round(1000 * (k.log ? Math.log(v / k.min) / Math.log(k.max / k.min) : (v - k.min) / (k.max - k.min)));
 const fromPos = (k, p) => (k.log ? k.min * (k.max / k.min) ** (p / 1000) : k.min + ((k.max - k.min) * p) / 1000);
 
+// Двойные кнопки «− название +»: одна пара — оба направления.
+const PAIRS = [
+  { label: 'Темп', minus: 'медленнее', plus: 'быстрее', val: () => state.bpm },
+  { label: 'Кислота', minus: 'меньше кислоты', plus: 'больше кислоты', val: () => Math.round(state.tracks.bass.p.res) },
+  { label: 'Румбл', minus: 'меньше румбла', plus: 'больше румбла', val: () => pct(state.master.rumble) },
+  { label: 'Фильтр', minus: 'закрой фильтр', plus: 'открой фильтр', val: () => (!isEmpty(state.tracks.bass) && !state.tracks.bass.mute ? hz(state.tracks.bass.p.cutoff) : state.master.cut >= 19500 ? 'открыт' : hz(state.master.cut)) },
+  { label: 'Бочка', minus: 'бочка мягче', plus: 'бочка жёстче', val: () => pct(state.tracks.kick.p.drive) },
+  { label: 'Хэты', minus: 'меньше хэтов', plus: 'больше хэтов', val: () => state.tracks.hat.steps.filter(Boolean).length },
+  { label: 'Эхо', minus: 'меньше эха', plus: 'больше эха', val: () => pct(state.master.delay / 1.2) },
+  { label: 'Реверб', minus: 'меньше реверба', plus: 'больше реверба', val: () => pct(state.master.reverb / 1.2) },
+  { label: 'Свинг', minus: 'меньше свинга', plus: 'больше свинга', val: () => pct(state.swing) },
+  { label: 'Громкость', minus: 'тише', plus: 'громче', val: () => dbs(state.master.vol) },
+];
+
 const EXAMPLES = [
-  'сделай техно', 'добавь бочку', 'хэты на офбит', 'кислотный бас', 'клэп на 2 и 4', 'темп 134', 'больше кислоты',
-  'открой фильтр', 'дабовые аккорды', 'нарастание', 'брейк', 'дроп', 'напою бас', 'битбокс', 'добавь румбл',
-  'только бас', 'верни всё', 'сделай минимал', 'бочка жёстче', 'больше эха на аккордах', 'придумай мелодию',
-  'добавь свинг', 'тональность ре минор', 'другие хэты', 'сделай эсид', 'частые хэты', 'добавь перкуссию',
+  'сделай техно', 'сделай витч хаус', 'напиши трек на 3 минуты', 'добавь бочку', 'хэты на офбит', 'кислотный бас', 'клэп на 2 и 4',
+  'бочка 808', 'набор витч хаус', 'звуки 808', 'набор эсид', 'новый бас', 'новый ритм хэтов', 'дабовые аккорды', 'нарастание', 'брейк', 'дроп',
+  'напою бас', 'битбокс', 'добавь румбл', 'только бас', 'верни всё', 'сделай минимал', 'придумай мелодию', 'тональность ре минор',
+  'сделай эсид', 'добавь перкуссию', 'хард-техно', 'играй весь трек', 'мрачные аккорды', 'хэты трэп', 'сочини мелодик-техно',
 ];
 
 const HELP = [
-  ['Начать', ['сделай техно', 'сделай эсид', 'сделай минимал', 'сделай даб-техно', 'сделай индастриал', 'сделай гипнотик', 'хард-техно', 'детройт', 'поехали', 'стоп', 'новый трек']],
-  ['Инструменты', ['добавь бочку', 'ломаная бочка', 'хэты на офбит', 'частые хэты', 'клэп на 2 и 4', 'добавь открытый хэт', 'добавь перкуссию', 'кислотный бас', 'глубокий бас', 'дабовые аккорды', 'придумай мелодию', 'добавь румбл']],
-  ['Убрать и поменять', ['убери бочку', 'верни бочку', 'только бас', 'верни всё', 'убери всё кроме бочки', 'очисти хэты', 'новый бас', 'другие хэты', 'больше хэтов', 'проще бас']],
+  ['Начать', ['сделай техно', 'сделай эсид', 'сделай витч хаус', 'сделай минимал', 'сделай даб-техно', 'сделай индастриал', 'сделай гипнотик', 'хард-техно', 'детройт', 'поехали', 'стоп', 'новый трек']],
+  ['Трек целиком', ['напиши трек на 3 минуты', 'сочини витч хаус', 'сделай техно на 5 минут', 'трек на полторы минуты', 'играй весь трек', 'режим петли', 'с начала', 'брейк', 'дроп', 'сохрани']],
+  ['Звуки', ['другая бочка', 'другой клэп', 'другой хэт', 'другой открытый хэт', 'другая перкуссия', 'другой бас', 'другие аккорды', 'другой синт', 'бочка 808', 'клэп 909', 'бас 303', 'звук клэпа снейр', 'набор витч хаус', 'звуки 808', 'набор эсид', 'набор индастриал']],
+  ['Инструменты и рисунки', ['добавь бочку', 'ломаная бочка', 'хэты на офбит', 'частые хэты', 'хэты трэп', 'клэп на 2 и 4', 'добавь открытый хэт', 'добавь перкуссию', 'кислотный бас', 'глубокий бас', 'бас 808', 'дабовые аккорды', 'мрачные аккорды', 'придумай мелодию', 'добавь румбл', 'новый бас', 'новый ритм хэтов', 'новые аккорды']],
+  ['Убрать и соло', ['убери бочку', 'верни бочку', 'только бас', 'только бочка и бас', 'соло хэт тоже', 'верни всё', 'убери всё кроме бочки', 'очисти хэты', 'больше хэтов', 'проще бас']],
   ['Звук', ['темп 135', 'быстрее', 'громче бас', 'тише хэты', 'открой фильтр', 'закрой фильтр на всём', 'больше кислоты', 'бочка жёстче', 'бочку длиннее', 'больше эха на аккордах', 'больше реверба', 'сухо', 'добавь свинг', 'бас на октаву выше']],
   ['Тональность', ['тональность ре минор', 'в фа диез миноре', 'транспонируй на тон выше']],
   ['Шоу', ['нарастание', 'брейк', 'дроп']],
@@ -645,13 +814,19 @@ function buildUI() {
     row.className = 'row';
     row.dataset.id = t.id;
     row.style.setProperty('--c', t.color);
-    row.innerHTML = `<div class="rh"><span class="dot"></span><span class="nm">${t.name}</span>`
-      + '<button class="ms m" title="Выключить (mute)">M</button><button class="ms s" title="Только эта дорожка (соло)">S</button>'
+    row.innerHTML = `<div class="rh"><span class="dot"></span><button class="nm" title="Выбрать звук"><span>${t.name}</span><small></small></button>`
+      + '<button class="ms m" title="Выключить (mute)">M</button><button class="ms s" title="Соло — можно включить у нескольких">S</button>'
       + '<input class="vol" type="range" min="-30" max="8" step="1" title="Громкость дорожки"></div>'
       + `<div class="cells">${'<button class="cell"></button>'.repeat(16)}</div>`;
     grid.append(row);
-    rows[t.id] = { row, cells: [...row.querySelectorAll('.cell')], m: row.querySelector('.m'), s: row.querySelector('.s'), vol: row.querySelector('.vol') };
+    rows[t.id] = { row, cells: [...row.querySelectorAll('.cell')], m: row.querySelector('.m'), s: row.querySelector('.s'), vol: row.querySelector('.vol'), snd: row.querySelector('.nm small') };
   }
+
+  $('#pairs').innerHTML = PAIRS.map((p, i) => `<div class="pair" data-i="${i}"><button class="pm" data-cmd="${p.minus}" aria-label="${p.minus}">−</button>`
+    + `<div class="pl"><span>${p.label}</span><b></b></div><button class="pm" data-cmd="${p.plus}" aria-label="${p.plus}">+</button></div>`).join('');
+
+  $('#kits').innerHTML = KIT_IDS.map(k => `<button class="kit" data-kit="${k}"><b>${KITS[k].name}</b><small>${KITS[k].desc}</small></button>`).join('');
+  $('#voices').innerHTML = TRACKS.map(t => `<button class="vb" data-id="${t.id}" style="--c:${t.color}"><span class="dot"></span><span class="vn">${t.name}</span><b></b><svg><use href="#i-down"/></svg></button>`).join('');
 
   const knobs = $('#knobs');
   knobs.innerHTML = '';
@@ -666,6 +841,7 @@ function buildUI() {
       el.querySelector('output').textContent = k.fmt(k.get());
       engine.applyParams();
       save();
+      renderPairs();
     });
     k.el = el;
     knobs.append(el);
@@ -681,9 +857,11 @@ function buildUI() {
 }
 
 function refreshChips() {
+  const first = isAllEmpty() ? ['сделай техно', 'сделай витч хаус', 'напиши трек на 3 минуты'] : [];
+  // «другой …» для того, что сейчас играет
+  const playing = LANES.filter(id => !isEmpty(state.tracks[id])).sort(() => Math.random() - 0.5).slice(0, 3).map(id => OTHER[id]);
   const pool = [...EXAMPLES].sort(() => Math.random() - 0.5);
-  const first = isAllEmpty() ? ['сделай техно', 'добавь бочку'] : [];
-  const list = [...new Set([...first, ...pool])].slice(0, 8);
+  const list = [...new Set([...first, ...playing, ...pool])].slice(0, 9);
   $('#chips').innerHTML = list.map(p => `<button class="chip">${p}</button>`).join('');
 }
 
@@ -691,6 +869,9 @@ function render() {
   renderTransport();
   renderGrid();
   renderKnobs();
+  renderPairs();
+  renderSound();
+  renderSongCard();
 }
 
 function renderTransport() {
@@ -703,7 +884,7 @@ function renderTransport() {
   if (document.activeElement !== $('#keySel')) $('#keySel').value = state.key;
   if (document.activeElement !== $('#scaleSel')) $('#scaleSel').value = state.scale;
   $('#recBtn').classList.toggle('on', recording);
-  if (!recording) $('#recBtn .lbl').textContent = 'Запись трека';
+  if (!recording) $('#recBtn .lbl').textContent = 'Запись';
 }
 
 function renderGrid() {
@@ -714,6 +895,7 @@ function renderGrid() {
     r.row.classList.toggle('empty', isEmpty(tr));
     r.m.classList.toggle('on', tr.mute);
     r.s.classList.toggle('on', tr.solo);
+    r.snd.textContent = SOUNDS[t.id][tr.sound].name;
     if (document.activeElement !== r.vol) r.vol.value = tr.p.vol;
     if (t.kind === 'drum') {
       r.cells.forEach((c, i) => {
@@ -730,8 +912,10 @@ function renderGrid() {
     }
   }
   $('#emptyHint').hidden = !isAllEmpty();
-  $('#genreTag').textContent = state.genre ? GENRES[state.genre].name : '';
-  $('#genreTag').hidden = !state.genre;
+  const g = state.genre && GENRES[state.genre];
+  $('#genreTag').textContent = g ? g.name : '';
+  $('#genreTag').hidden = !g;
+  markSectionRows();
 }
 
 function renderKnobs() {
@@ -742,6 +926,273 @@ function renderKnobs() {
   }
 }
 
+function renderPairs() {
+  document.querySelectorAll('#pairs .pair').forEach(el => { el.querySelector('b').textContent = PAIRS[+el.dataset.i].val(); });
+}
+
+function renderSound() {
+  const kit = kitOf(state.tracks);
+  $('#kitSub').textContent = kit ? `набор «${KITS[kit].name}»` : 'свой набор';
+  document.querySelectorAll('#kits .kit').forEach(b => b.classList.toggle('on', b.dataset.kit === kit));
+  document.querySelectorAll('#voices .vb').forEach(b => { b.querySelector('b').textContent = SOUNDS[b.dataset.id][state.tracks[b.dataset.id].sound].name; });
+}
+
+// ——— Трек: части, дорожки, энергия ———
+function renderSongCard() {
+  const song = state.song, box = $('#songTl');
+  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === state.mode));
+  $('#lenVal').textContent = fmtMin(state.songMin);
+  $('#renderBtn').hidden = !song;
+  $('#songEmpty').hidden = !!song;
+  box.hidden = !song;
+  if (!song) {
+    $('#songSub').textContent = 'ещё не сочинён';
+    box.innerHTML = '';
+    return;
+  }
+  const total = songBars(song);
+  $('#songSub').textContent = `${fmtTime(total * barSec(state.bpm))} · ${total} ${plural(total, 'такт', 'такта', 'тактов')} · сценарий «${SCRIPTS[song.genre]?.name || 'свой'}»`;
+  const cols = `var(--lw) ${song.sections.map(s => `minmax(38px, ${s.bars}fr)`).join(' ')}`;
+  let h = `<div class="tl" style="grid-template-columns:${cols}"><div class="corner"><svg class="energy-lbl"><use href="#i-bolt"/></svg></div>`
+    + `<div class="en" style="grid-column:2/-1"><svg id="energy" preserveAspectRatio="none"></svg></div><span></span>`;
+  song.sections.forEach((s, i) => {
+    const P = PART[s.type];
+    const ic = (s.in !== 'none' ? `<i title="Вход: ${INS[s.in]}">${{ impact: '✸', crash: '◎', down: '↘' }[s.in]}</i>` : '')
+      + (s.out !== 'none' ? `<i title="Конец: ${OUTS[s.out]}">${{ fill: '⋯', swell: '◢', rise: '↗', gap: '▢' }[s.out]}</i>` : '');
+    h += `<button class="sec" data-i="${i}" style="--c:${P.color}" title="${P.hint}"><b>${P.name}</b><small>${s.bars} т.</small><span class="ic">${ic}</span></button>`;
+  });
+  for (const id of LANES) {
+    const t = TRACK[id], emptyT = isEmpty(state.tracks[id]);
+    h += `<span class="ln${emptyT ? ' empty' : ''}" style="--c:${t.color}">${SHORT[id]}</span>`;
+    song.sections.forEach((s, i) => { h += `<button class="lc l${s.lv[id] || 0}${emptyT ? ' empty' : ''}" data-i="${i}" data-id="${id}" style="--c:${t.color}" aria-label="${NAME[id]}, ${PART[s.type].name}"></button>`; });
+  }
+  h += '<div class="sph" id="sph" hidden></div></div>';
+  box.innerHTML = h;
+  requestAnimationFrame(drawEnergy);
+  if (popState && popState.kind === 'sec') reopenSecPop();
+}
+
+function drawEnergy() {
+  const svg = $('#energy'), song = state.song;
+  if (!svg || !song) return;
+  const secs = [...document.querySelectorAll('#songTl .sec')], en = svg.parentElement;
+  const W = en.clientWidth, H = en.clientHeight, x0 = en.offsetLeft;
+  if (!W || !secs.length) return;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const y = v => H - 3 - v * (H - 6);
+  let d = '';
+  song.sections.forEach((s, i) => {
+    const el = secs[i], a = el.offsetLeft - x0, b = a + el.offsetWidth, [e0, e1] = energy(state, s);
+    d += `${i ? 'L' : 'M'}${a.toFixed(1)},${y(e0).toFixed(1)} L${b.toFixed(1)},${y(e1).toFixed(1)} `;
+  });
+  svg.innerHTML = '<defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d4ff3a" stop-opacity=".35"/><stop offset="1" stop-color="#d4ff3a" stop-opacity="0"/></linearGradient></defs>'
+    + `<path d="${d} L${W},${H} L0,${H} Z" fill="url(#eg)"/><path d="${d}" fill="none" stroke="#d4ff3a" stroke-width="1.6" stroke-linejoin="round"/>`;
+}
+
+function markSectionRows() {
+  const L = state.mode === 'song' && state.song && engine.playing && songAt >= 0 ? locate(state.song, songAt) : null;
+  for (const t of TRACKS) rows[t.id].row.classList.toggle('secoff', !!L && !L.s.lv[t.id]);
+  document.querySelectorAll('#songTl .sec').forEach((el, i) => el.classList.toggle('cur', !!L && L.i === i));
+}
+
+function moveSongHead() {
+  const ph = $('#sph');
+  if (!ph) return;
+  if (!(state.mode === 'song' && state.song && engine.playing && songAt >= 0)) { ph.hidden = true; return; }
+  const L = locate(state.song, songAt);
+  const el = L && document.querySelector(`#songTl .sec[data-i="${L.i}"]`);
+  if (!el) { ph.hidden = true; return; }
+  ph.hidden = false;
+  const frac = (L.j + Math.max(0, playhead) / 16) / L.s.bars;
+  ph.style.transform = `translateX(${(el.offsetLeft + el.offsetWidth * frac).toFixed(1)}px)`;
+}
+
+// ——— Всплывающие окошки (не закрывают экран) ———
+let popEl = null, popState = null;
+function closePop() {
+  if (popEl) popEl.remove();
+  popEl = null;
+  popState = null;
+}
+function openPop(anchor, html, cls, st) {
+  closePop();
+  const el = document.createElement('div');
+  el.className = 'pop ' + cls;
+  el.innerHTML = html;
+  document.body.append(el);
+  popEl = el;
+  popState = st;
+  placePop(anchor);
+  return el;
+}
+function placePop(anchor) {
+  const el = popEl, r = anchor.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  let x = r.left + r.width / 2 - w / 2;
+  x = clamp(x, 8, vw - w - 8);
+  let y = r.bottom + 8;
+  if (y + h > vh - 8 && r.top - h - 8 > 8) y = r.top - h - 8;
+  y = clamp(y, 8, Math.max(8, vh - h - 8));
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+
+// Долгое нажатие (на телефоне) или правая кнопка мыши.
+function onHold(root, selector, fn) {
+  let fired = false;
+  root.addEventListener('pointerdown', e => {
+    fired = false;
+    const el = e.target.closest(selector);
+    if (!el || e.button > 0) return;
+    const x = e.clientX, y = e.clientY;
+    const timer = setTimeout(() => { fired = true; navigator.vibrate?.(12); fn(el); }, 420);
+    const off = () => { clearTimeout(timer); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', off); window.removeEventListener('pointercancel', off); };
+    const move = ev => { if (Math.hypot(ev.clientX - x, ev.clientY - y) > 10) off(); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', off);
+    window.addEventListener('pointercancel', off);
+  });
+  root.addEventListener('contextmenu', e => {
+    const el = e.target.closest(selector);
+    if (!el) return;
+    e.preventDefault();
+    if (!fired) fn(el);
+  });
+  root.addEventListener('click', e => {
+    if (fired && e.target.closest(selector)) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; }
+  }, true);
+}
+
+// Окошко выбора ноты: три октавы лада, акцент, глайд, длина.
+function openNotePop(cell, id, i) {
+  const html = noteHtml(id, i);
+  openPop(cell, html, 'notepop', { kind: 'note', id, i, cell });
+}
+function noteHtml(id, i) {
+  const tr = state.tracks[id], n = tr.steps[i], cur = n ? n.n : null, sc = state.scale;
+  const ranges = [[7, '↑'], [0, ''], [-7, '↓']];
+  let h = `<div class="ph"><b>${NAME[id]}</b><span>шаг ${i + 1}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div><div class="notes">`;
+  for (const [d0, lab] of ranges) {
+    h += `<span class="oct">${lab}</span>`;
+    for (let d = d0; d < d0 + 7; d++) {
+      const semis = deg(sc, d);
+      if (semis > 24 || semis < -12) { h += '<span></span>'; continue; }
+      h += `<button class="nt${semis === cur ? ' on' : ''}${d % 7 === 0 ? ' root' : ''}" data-a="note" data-n="${semis}">${noteName(state.key, semis)}</button>`;
+    }
+  }
+  h += '</div><div class="pfoot">';
+  h += `<button class="tg${n && n.acc ? ' on' : ''}" data-a="acc">Акцент</button>`;
+  if (id === 'bass') h += `<button class="tg${n && n.slide ? ' on' : ''}" data-a="slide">Глайд</button>`;
+  h += `<span class="lenl">Длина</span>${[1, 2, 4, 8].map(L => `<button class="tg lb${n && (n.len || 1) === L ? ' on' : ''}" data-a="len" data-v="${L}">${L}</button>`).join('')}`;
+  h += `<button class="tg del" data-a="del"${n ? '' : ' disabled'}>Убрать</button></div>`;
+  return h;
+}
+function noteAction(btn) {
+  const { id, i } = popState, tr = state.tracks[id], a = btn.dataset.a;
+  if (a === 'close') { closePop(); return; }
+  pushUndo();
+  let n = tr.steps[i];
+  const make = () => { if (!n) { n = tr.steps[i] = { n: 0, len: 1 }; } return n; };
+  if (a === 'note') {
+    make().n = +btn.dataset.n;
+    tr.mute = false;
+    ensureAudio().then(() => engine.preview(id, n.n));
+    closePop();
+  } else if (a === 'acc') make().acc = !n.acc;
+  else if (a === 'slide') make().slide = !n.slide;
+  else if (a === 'len') {
+    const L = Math.min(+btn.dataset.v, 16 - i);
+    make().len = L;
+    for (let k = i + 1; k < i + L; k++) tr.steps[k] = null;
+  } else if (a === 'del') { tr.steps[i] = null; closePop(); }
+  save();
+  renderGrid();
+  if (popEl && popState && popState.kind === 'note') { popEl.innerHTML = noteHtml(id, i); }
+}
+
+// Окошко выбора звука дорожки.
+function openSoundPop(anchor, id) {
+  openPop(anchor, soundHtml(id), 'sndpop', { kind: 'sound', id });
+}
+function soundHtml(id) {
+  const cur = state.tracks[id].sound;
+  return `<div class="ph"><b>${NAME[id]}</b><span>нажми — послушать и выбрать</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div><div class="snds">`
+    + Object.entries(SOUNDS[id]).map(([sid, S]) => `<button class="snd${sid === cur ? ' on' : ''}" data-s="${sid}"><b>${S.name}</b><small>${S.desc}</small></button>`).join('')
+    + `</div><div class="pfoot"><button class="tg" data-a="pat">${NEWPAT[id][0].toUpperCase() + NEWPAT[id].slice(1)}</button></div>`;
+}
+async function soundAction(btn) {
+  const { id } = popState;
+  if (btn.dataset.a === 'close') { closePop(); return; }
+  await ensureAudio();
+  if (btn.dataset.a === 'pat') { closePop(); runText(NEWPAT[id], 'chip'); return; }
+  const sid = btn.dataset.s;
+  pushUndo();
+  setSound(id, sid);
+  if (isEmpty(state.tracks[id])) setPattern(id, SOUNDS[id][sid].v || defaultVariant(id, state.genre));
+  state.tracks[id].mute = false;
+  commit();
+  engine.preview(id);
+  setDid(`${NAME[id]}: звук «${SOUNDS[id][sid].name}»`);
+  if (popEl) popEl.innerHTML = soundHtml(id);
+}
+
+// Окошко части трека.
+function openSecPop(i) {
+  const el = document.querySelector(`#songTl .sec[data-i="${i}"]`);
+  if (!el) return;
+  openPop(el, secHtml(i), 'secpop', { kind: 'sec', i });
+}
+function reopenSecPop() {
+  const { i } = popState;
+  const el = document.querySelector(`#songTl .sec[data-i="${i}"]`);
+  if (!el || !state.song.sections[i]) { closePop(); return; }
+  popEl.innerHTML = secHtml(i);
+  placePop(el);
+}
+function secHtml(i) {
+  const s = state.song.sections[i], n = state.song.sections.length;
+  const opt = (act, dict, cur) => Object.entries(dict).map(([k, v]) => `<button class="tg${k === cur ? ' on' : ''}" data-a="${act}" data-v="${k}">${typeof v === 'string' ? v : v.name}</button>`).join('');
+  return `<div class="ph"><b style="color:${PART[s.type].color}">${PART[s.type].name}</b><span>${s.bars} ${plural(s.bars, 'такт', 'такта', 'тактов')} · ${fmtTime(s.bars * barSec(state.bpm))}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="prow"><span>Часть</span><div class="opts">${opt('type', PART, s.type)}</div></div>`
+    + `<div class="prow"><span>Длина</span><div class="opts"><button class="tg" data-a="len" data-v="-4">−4</button><button class="tg" data-a="len" data-v="-1">−1</button><b class="bars">${s.bars}</b><button class="tg" data-a="len" data-v="1">+1</button><button class="tg" data-a="len" data-v="4">+4</button></div></div>`
+    + `<div class="prow"><span>Вход</span><div class="opts">${opt('in', INS, s.in)}</div></div>`
+    + `<div class="prow"><span>Конец</span><div class="opts">${opt('out', OUTS, s.out)}</div></div>`
+    + `<div class="prow"><span>Фильтр</span><div class="opts">${opt('filter', FILTERS, s.filter)}</div></div>`
+    + `<div class="prow"><span>Гармония</span><div class="opts">${opt('prog', PROGS, s.prog)}</div></div>`
+    + `<div class="pfoot"><button class="tg lime" data-a="play">▶ Играть отсюда</button><button class="tg" data-a="left"${i ? '' : ' disabled'}>←</button><button class="tg" data-a="right"${i < n - 1 ? '' : ' disabled'}>→</button>`
+    + `<button class="tg" data-a="dup">Копия</button><button class="tg del" data-a="del"${n > 1 ? '' : ' disabled'}>Удалить</button></div>`;
+}
+function secAction(btn) {
+  const a = btn.dataset.a, v = btn.dataset.v, secs = state.song.sections;
+  let { i } = popState;
+  if (a === 'close') { closePop(); return; }
+  if (a === 'play') { ensureAudio().then(() => { startSongAt(sectionStart(state.song, i)); commit(); setDid(`Играю с части «${PART[secs[i].type].name}»`); }); closePop(); return; }
+  pushUndo();
+  const s = secs[i];
+  if (a === 'type') s.type = v;
+  else if (a === 'len') s.bars = clamp(s.bars + +v, 1, 64);
+  else if (a === 'in') s.in = v;
+  else if (a === 'out') s.out = v;
+  else if (a === 'filter') s.filter = v;
+  else if (a === 'prog') s.prog = v;
+  else if (a === 'left' && i > 0) { [secs[i - 1], secs[i]] = [secs[i], secs[i - 1]]; i--; }
+  else if (a === 'right' && i < secs.length - 1) { [secs[i + 1], secs[i]] = [secs[i], secs[i + 1]]; i++; }
+  else if (a === 'dup') { secs.splice(i + 1, 0, structuredClone(s)); i++; }
+  else if (a === 'del' && secs.length > 1) { secs.splice(i, 1); closePop(); save(); render(); return; }
+  popState.i = i;
+  save();
+  render();
+}
+
+// Окошко уровня дорожки в части (долгое нажатие на клетку трека).
+const LVL = ['Выкл', 'Легко', 'Полностью', 'Плотно'];
+function openLevelPop(cell) {
+  const i = +cell.dataset.i, id = cell.dataset.id, cur = state.song.sections[i].lv[id] || 0;
+  openPop(cell, `<div class="ph"><b>${NAME[id]}</b><span>${PART[state.song.sections[i].type].name}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="lvls">${LVL.map((l, k) => `<button class="tg${k === cur ? ' on' : ''}" data-a="lv" data-v="${k}">${l}</button>`).join('')}</div>`, 'lvlpop', { kind: 'lvl', i, id });
+}
+
+// ——— Мелочи интерфейса ———
 function setPlayhead(s) {
   if (s === playhead) return;
   for (const t of TRACKS) {
@@ -750,7 +1201,7 @@ function setPlayhead(s) {
     if (s >= 0) {
       const c = r.cells[s];
       c.classList.add('now');
-      if (c.classList.contains('on') && !r.row.classList.contains('muted')) c.animate([{ filter: 'brightness(1.9)', transform: 'scale(1.08)' }, { filter: 'brightness(1)', transform: 'scale(1)' }], 220);
+      if (c.classList.contains('on') && !r.row.classList.contains('muted') && !r.row.classList.contains('secoff')) c.animate([{ filter: 'brightness(1.9)', transform: 'scale(1.08)' }, { filter: 'brightness(1)', transform: 'scale(1)' }], 220);
     }
   }
   playhead = s;
@@ -787,45 +1238,69 @@ function toast(msg, kind = '') {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 4200);
 }
 
+// ——— Микрофон и распознавание речи ———
 const VSTATUS = {
   off: 'Нажми на микрофон и скажи, что сыграть',
   listening: 'Слушаю… говори команды',
   paused: 'Записываю голос — команды на паузе',
   retry: 'Нет связи с распознаванием (нужен интернет). Пробую снова…',
 };
+function vStatus(text, warn = false) {
+  const el = $('#vStatus');
+  el.textContent = text;
+  el.classList.toggle('warn', warn);
+}
 function setVoiceState(s) {
   $('#micBtn').classList.toggle('on', voice.want);
   $('#micBtn').classList.toggle('retry', s === 'retry');
-  $('#vStatus').textContent = VSTATUS[s] || VSTATUS.off;
+  vStatus(VSTATUS[s] || VSTATUS.off);
   if (!voice.want) $('#micBtn').style.setProperty('--lvl', 0);
+}
+const HOW_ALLOW = MOBILE
+  ? 'Нажми на значок слева от адреса сайта → «Разрешения» → «Микрофон» → «Разрешить» и снова нажми на микрофон'
+  : 'Нажми на значок слева от адреса сайта → «Микрофон» → «Разрешить» и снова нажми на микрофон';
+function micDenied(e) {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') vStatus('Микрофон запрещён для этого сайта. ' + HOW_ALLOW, true);
+  else if (n === 'NotFoundError' || n === 'OverconstrainedError') vStatus('Микрофон не найден — проверь, что он подключён', true);
+  else if (n === 'NotReadableError') vStatus('Микрофон занят другой программой (звонок, запись). Закрой её и нажми ещё раз', true);
+  else vStatus('Не получилось включить микрофон: ' + ((e && e.message) || n || 'неизвестная ошибка'), true);
 }
 function voiceError(err) {
   if (err === 'not-allowed' || err === 'service-not-allowed') {
-    $('#vStatus').textContent = 'Микрофон запрещён. Нажми на значок слева от адреса → Микрофон → Разрешить';
-    toast('Chrome не дал доступ к микрофону', 'err');
-  } else if (err === 'audio-capture') {
-    $('#vStatus').textContent = 'Микрофон не найден — проверь, что он подключён';
-  } else if (err === 'network') {
-    $('#vStatus').textContent = VSTATUS.retry;
+    if (voice.want) { vStatus('Запускаю распознавание ещё раз…'); return; }
+    vStatus(`Распознавание речи не запустилось. ${MOBILE ? 'Открой сайт в Google Chrome' : 'Нужен Google Chrome'} и интернет. Команды можно нажимать и писать ниже`, true);
+  } else if (err === 'audio-capture') vStatus('Микрофон не найден или занят — проверь его и нажми ещё раз', true);
+  else if (err === 'network') vStatus(VSTATUS.retry);
+  $('#micBtn').classList.toggle('on', voice.want);
+  $('#micBtn').classList.toggle('retry', voice.want && err === 'network');
+}
+async function micClick() {
+  await ensureAudio();
+  if (!voice.supported) {
+    vStatus('Голосовые команды работают в Google Chrome. Здесь можно писать команды в поле ниже', true);
+    $('#typeIn').focus();
+    return;
   }
-  setVoiceState(voice.want ? 'retry' : 'off');
+  if (voice.want) { voice.stop(); return; }
+  if (!window.isSecureContext) { vStatus('Микрофон работает только по защищённой ссылке (https://…) или на этом компьютере', true); return; }
+  // Сначала одно разрешение на микрофон, потом распознавание — так браузер не путается в двух запросах сразу.
+  vStatus('Включаю микрофон…');
+  try {
+    await mic.ensure();
+  } catch (e) {
+    micDenied(e);
+    return;
+  }
+  if (MOBILE) mic.release();
+  voice.start();
+  setVoiceState('listening');
 }
 
 function openHelp() { const d = $('#helpDlg'); if (!d.open) d.showModal(); }
 
 function bind() {
-  $('#micBtn').addEventListener('click', async () => {
-    await ensureAudio();
-    if (!voice.supported) {
-      $('#vStatus').textContent = 'Голосовые команды работают в Google Chrome. Здесь можно писать команды в поле ниже';
-      $('#typeIn').focus();
-      return;
-    }
-    if (voice.want) { voice.stop(); return; }
-    mic.ensure().catch(() => {});
-    voice.start();
-    setVoiceState('listening');
-  });
+  $('#micBtn').addEventListener('click', micClick);
 
   $('#typeForm').addEventListener('submit', e => {
     e.preventDefault();
@@ -837,10 +1312,37 @@ function bind() {
 
   document.addEventListener('click', e => {
     const chip = e.target.closest('.chip');
-    if (!chip) return;
-    if (chip.closest('#helpDlg')) $('#helpDlg').close();
-    runText(chip.textContent, 'chip').then(() => { if (chip.closest('#chips')) refreshChips(); });
+    if (chip) {
+      if (chip.closest('#helpDlg')) $('#helpDlg').close();
+      runText(chip.textContent, 'chip').then(() => { if (chip.closest('#chips')) refreshChips(); });
+      return;
+    }
+    const pm = e.target.closest('.pm');
+    if (pm) { runText(pm.dataset.cmd, 'pair'); return; }
   });
+
+  // Окошки: клики внутри и закрытие снаружи
+  document.addEventListener('click', e => {
+    if (!popEl || !popEl.contains(e.target)) return;
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    if (b.dataset.a === 'close') { closePop(); return; }
+    if (popState.kind === 'note') noteAction(b);
+    else if (popState.kind === 'sound') soundAction(b);
+    else if (popState.kind === 'sec') secAction(b);
+    else if (popState.kind === 'lvl') {
+      pushUndo();
+      state.song.sections[popState.i].lv[popState.id] = +b.dataset.v;
+      closePop();
+      save();
+      renderSongCard();
+    }
+  });
+  document.addEventListener('pointerdown', e => {
+    if (popEl && !popEl.contains(e.target) && !e.target.closest('.sec, .nm, .vb')) closePop();
+  }, true);
+  window.addEventListener('resize', () => { closePop(); drawEnergy(); });
+  document.addEventListener('scroll', e => { if (popEl && !popEl.contains(e.target)) closePop(); }, true);
 
   $('#playBtn').addEventListener('click', async () => {
     await ensureAudio();
@@ -848,16 +1350,16 @@ function bind() {
   });
   document.querySelectorAll('[data-bpm]').forEach(b => b.addEventListener('click', () => {
     state.bpm = clamp(state.bpm + +b.dataset.bpm, 60, 200);
-    engine.applyParams(); save(); renderTransport();
+    engine.applyParams(); save(); renderTransport(); renderPairs(); renderSongCard();
   }));
   $('.bpm').addEventListener('wheel', e => {
     e.preventDefault();
     state.bpm = clamp(state.bpm + (e.deltaY < 0 ? 1 : -1), 60, 200);
-    engine.applyParams(); save(); renderTransport();
+    engine.applyParams(); save(); renderTransport(); renderPairs();
   }, { passive: false });
   $('#keySel').addEventListener('change', e => { pushUndo(); state.key = +e.target.value; save(); render(); });
   $('#scaleSel').addEventListener('change', e => { pushUndo(); state.scale = e.target.value; save(); render(); });
-  $('#undoBtn').addEventListener('click', () => { if (undo()) { engine.applyParams(); save(); render(); setDid('Отменил последнее изменение'); } });
+  $('#undoBtn').addEventListener('click', () => { if (undo()) { commit(); setDid('Отменил последнее изменение'); } });
   $('#helpBtn').addEventListener('click', openHelp);
   $('#helpClose').addEventListener('click', () => $('#helpDlg').close());
   $('#recBtn').addEventListener('click', async () => {
@@ -877,13 +1379,32 @@ function bind() {
   try { $('#phonesChk').checked = localStorage.getItem('pulse.phones') === '1'; } catch { /* нет хранилища */ }
   $('#phonesChk').addEventListener('change', e => { try { localStorage.setItem('pulse.phones', e.target.checked ? '1' : '0'); } catch { /* нет хранилища */ } });
 
+  // Звуки: наборы и тембр каждого инструмента
+  $('#kits').addEventListener('click', e => {
+    const b = e.target.closest('.kit');
+    if (b) act({ type: 'kit', id: b.dataset.kit }, `набор ${KITS[b.dataset.kit].name}`);
+  });
+  $('#voices').addEventListener('click', async e => {
+    const b = e.target.closest('.vb');
+    if (!b) return;
+    if (popState && popState.kind === 'sound' && popState.id === b.dataset.id) { closePop(); return; }
+    await ensureAudio();
+    openSoundPop(b, b.dataset.id);
+  });
+
+  // Секвенсор
   $('#grid').addEventListener('click', async e => {
     const row = e.target.closest('.row');
     if (!row) return;
     const id = row.dataset.id, tr = state.tracks[id];
     await ensureAudio();
+    if (e.target.closest('.nm')) {
+      const nm = e.target.closest('.nm');
+      if (popState && popState.kind === 'sound' && popState.id === id) closePop(); else openSoundPop(nm, id);
+      return;
+    }
     if (e.target.closest('.m')) { tr.mute = !tr.mute; if (id === 'bass' && tr.mute) engine.releaseBass(); }
-    else if (e.target.closest('.s')) { const on = !tr.solo; for (const t of TRACKS) state.tracks[t.id].solo = false; tr.solo = on; }
+    else if (e.target.closest('.s')) tr.solo = !tr.solo; // соло можно включить у нескольких дорожек
     else if (e.target.closest('.cell')) {
       const i = rows[id].cells.indexOf(e.target.closest('.cell'));
       pushUndo();
@@ -902,7 +1423,13 @@ function bind() {
       tr.mute = false;
       if (!engine.playing && tr.steps.some(Boolean)) play();
     } else return;
-    engine.applyParams(); save(); render();
+    commit();
+  });
+  onHold($('#grid'), '.cell', cell => {
+    const row = cell.closest('.row'), id = row.dataset.id;
+    if (TRACK[id].kind === 'drum') return;
+    ensureAudio();
+    openNotePop(cell, id, rows[id].cells.indexOf(cell));
   });
   $('#grid').addEventListener('wheel', e => {
     const cell = e.target.closest('.cell'), row = e.target.closest('.row');
@@ -919,16 +1446,51 @@ function bind() {
     engine.applyParams(); save();
   });
 
+  // Трек: режим, длина, сочинить, сохранить, части и дорожки
+  $('#modeSeg').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (b) act({ type: 'mode', mode: b.dataset.m }, b.dataset.m === 'song' ? 'весь трек' : 'петля');
+  });
+  $('#lenSeg').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const k = LENS.findIndex(x => x >= state.songMin);
+    state.songMin = LENS[clamp((k < 0 ? LENS.length - 1 : k) + +b.dataset.d, 0, LENS.length - 1)];
+    save();
+    renderSongCard();
+  });
+  $('#writeBtn').addEventListener('click', () => act({ type: 'song', minutes: state.songMin }, `сочини трек на ${fmtMin(state.songMin)}`));
+  $('#renderBtn').addEventListener('click', async () => { const r = await saveSongWav(); setDid(r); log('сохрани трек', r, true); });
+  $('#songTl').addEventListener('click', e => {
+    const sec = e.target.closest('.sec');
+    if (sec) {
+      if (popState && popState.kind === 'sec' && popState.i === +sec.dataset.i) closePop(); else openSecPop(+sec.dataset.i);
+      return;
+    }
+    const lc = e.target.closest('.lc');
+    if (lc) {
+      pushUndo();
+      const s = state.song.sections[+lc.dataset.i];
+      s.lv[lc.dataset.id] = s.lv[lc.dataset.id] ? 0 : 2;
+      save();
+      renderSongCard();
+    }
+  });
+  onHold($('#songTl'), '.lc', openLevelPop);
+  new ResizeObserver(() => drawEnergy()).observe($('#songTl'));
+
   document.addEventListener('keydown', e => {
     if (e.target.closest('input, select, textarea')) return;
+    if (e.key === 'Escape' && popEl) { closePop(); return; }
     if (e.code === 'Space') {
       e.preventDefault();
       ensureAudio().then(() => (engine.playing ? stop() : play()));
     } else if (e.key === 'Escape' && taking && taking.cancel) taking.cancel();
-    else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { if (undo()) { engine.applyParams(); save(); render(); } }
+    else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { if (undo()) commit(); }
   });
 }
 
+let lastSongAt = -2;
 function frame() {
   viz.draw();
   if (engine.ctx && engine.playing) {
@@ -936,7 +1498,10 @@ function frame() {
     let s = null;
     while (stepQ.length && stepQ[0][0] <= ct) s = stepQ.shift()[1];
     if (s != null) setPlayhead(s);
-  }
+    while (songQ.length && songQ[0][0] <= ct) songAt = songQ.shift()[1];
+  } else songAt = -1;
+  if (songAt !== lastSongAt) { lastSongAt = songAt; markSectionRows(); }
+  moveSongHead();
   if (voice.want && mic.analyser) $('#micBtn').style.setProperty('--lvl', Math.min(1, mic.level() * 9).toFixed(3));
   if (recording) $('#recBtn .lbl').textContent = fmtTime((performance.now() - recStartedAt) / 1000);
   requestAnimationFrame(frame);
@@ -966,9 +1531,23 @@ function init() {
     },
     error: voiceError,
   });
-  if (!voice.supported) $('#vStatus').textContent = 'Голосовые команды работают в Google Chrome. Здесь можно писать команды в поле ниже';
+  if (!voice.supported) vStatus('Голосовые команды работают в Google Chrome. Здесь можно писать команды в поле ниже');
+  navigator.permissions?.query({ name: 'microphone' }).then(p => {
+    if (p.state === 'denied') vStatus('Микрофон для этого сайта запрещён. ' + HOW_ALLOW, true);
+  }).catch(() => {});
+  engine.barFn = k => barData(state, k);
+  engine.setMode(state.mode);
   engine.onStep = (s, t) => { stepQ.push([t, s]); if (stepQ.length > 64) stepQ.shift(); };
-  engine.onBuildEnd = t => { doDrop(t); engine.applyParams(); save(); render(); setDid('Дроп!'); };
+  engine.onSongBar = (bar, t) => { songQ.push([t, bar]); if (songQ.length > 16) songQ.shift(); };
+  engine.onSongEnd = t => {
+    setTimeout(() => {
+      if (!engine.ended || state.mode !== 'song') return;
+      stop();
+      engine.songPos = 0;
+      setDid('Трек закончился. Нажми «Играть», чтобы послушать снова');
+    }, Math.max(0, (t - engine.ctx.currentTime) * 1000) + 2600);
+  };
+  engine.onBuildEnd = t => { doDrop(t); commit(); setDid('Дроп!'); };
   viz = new Viz($('#viz'), engine, () => state);
   engine.onKick = t => viz.kick(t);
   bind();

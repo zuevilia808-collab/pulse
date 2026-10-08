@@ -22,7 +22,8 @@ export class Mic {
     const s = (stream.getAudioTracks()[0].getSettings && stream.getAudioTracks()[0].getSettings()) || {};
     if (typeof s.latency === 'number' && s.latency > 0 && s.latency < 0.5) this.inLatency = s.latency;
     await this.engine.loadWorklet();
-    const src = ctx.createMediaStreamSource(stream);
+    this.cap?.disconnect();
+    const src = this.src = ctx.createMediaStreamSource(stream);
     const hp = ctx.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = 45;
@@ -39,6 +40,15 @@ export class Mic {
     this.cap.port.onmessage = e => this.chunks.push({ t: e.data.frame / ctx.sampleRate, d: e.data.chans[0] });
     src.connect(hp).connect(notch).connect(this.cap).connect(this.engine.silent);
     src.connect(this.analyser);
+  }
+
+  // Отпустить микрофон: на телефоне его нельзя делить между записью и распознаванием речи.
+  release() {
+    if (!this.stream) return;
+    this.stream.getTracks().forEach(t => t.stop());
+    try { this.src.disconnect(); } catch { /* уже отключён */ }
+    this.stream = null;
+    this.analyser = null;
   }
 
   level() {

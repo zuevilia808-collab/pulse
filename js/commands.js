@@ -1,6 +1,7 @@
 // Разбор русских голосовых команд в список действий.
 // Работает по корням слов, поэтому понимает «бочку», «бочка», «бочки», «хэты», «хай-хэт» и т. п.
 import { VARIANTS } from './music.js';
+import { KIT_WORDS, SOUND_WORDS } from './sounds.js';
 
 const B = '(?<![а-яa-z0-9])';
 const rx = s => new RegExp(B + '(?:' + s + ')');
@@ -53,18 +54,19 @@ const INSTR = [
 ].map(([id, s]) => [id, rx(s), rxg(s)]);
 
 const VARIANT_RX = {
-  kick: [['four', 'ровн|прям|4 4|на каждую долю|каждую долю|четверт|классич|обычн|на пол'], ['broken', 'ломан|брейкбит|сбит|синкоп|рван|криво|ломк'], ['half', 'половин|редк|реже|халф|half|через долю'], ['gallop', 'галоп|двойн|скач']],
-  clap: [['every', 'на каждую|каждую долю|все доли'], ['sync', 'синкоп|ломан|сбит|криво|смещ'], ['sparse', 'редк|раз в такт'], ['back', '2 4|бекбит|backbeat|ровн|обычн|классич']],
-  hat: [['six', 'шестнадцат|частые|частую|частый|часто|быстр|16|мелк|дробь|трель'], ['eight', 'восьм|8(?![0-9])'], ['gallop', 'галоп|скач'], ['sparse', 'редк|реже'], ['off', 'офбит|оффбит|оф бит|off ?beat|между|слаб|промежут|посередин|ровн|обычн|классич']],
+  kick: [['trap', 'треп|трап|trap|халфтайм|half ?time'], ['four', 'ровн|прям|4 4|на каждую долю|каждую долю|четверт|классич|обычн|на пол'], ['broken', 'ломан|брейкбит|сбит|синкоп|рван|криво|ломк'], ['half', 'половин|редк|реже|халф|half|через долю'], ['gallop', 'галоп|двойн|скач']],
+  clap: [['slow', 'на 3(?![0-9])|на третью|халфтайм|треп|трап'], ['every', 'на каждую|каждую долю|все доли'], ['sync', 'синкоп|ломан|сбит|криво|смещ'], ['sparse', 'редк|раз в такт'], ['back', '2 4|бекбит|backbeat|ровн|обычн|классич']],
+  hat: [['trap', 'треп|трап|trap|роллы|дробью'], ['six', 'шестнадцат|частые|частую|частый|часто|быстр|16|мелк|дробь|трель'], ['eight', 'восьм|8(?![0-9])'], ['gallop', 'галоп|скач'], ['sparse', 'редк|реже'], ['off', 'офбит|оффбит|оф бит|off ?beat|между|слаб|промежут|посередин|ровн|обычн|классич']],
   ohat: [['sparse', 'редк|реже|иногда'], ['off', 'офбит|оффбит|между|слаб|ровн|обычн']],
   perc: [['three', 'тройк|3(?![0-9])|гипно|триол'], ['sparse', 'редк|реже|немного|чуть'], ['sync', 'синкоп|ломан|афро|латин|сбит']],
-  bass: [['acid', 'кислот|есид|асид|acid|303|визж|квак|резонанс'], ['deep', 'глубок|дип|deep|саб|низк|мягк|бархат|тепл'], ['offbeat', 'офбит|между долями|простой|прост'], ['rolling', 'катящ|катит|роллинг|rolling|ровн|шестнадцат|быстр|бегущ|галоп|драйв']],
-  stab: [['chords', 'ритмичн|быстр|част|детройт|хаус'], ['sparse', 'редк|реже|раз в такт'], ['dub', 'даб|dub|ех[оа](?![а-я])|глубок|космич']],
-  lead: [['melody', 'мелоди|напев|тем[ау](?![а-я])|риф'], ['arp', 'арп|арпедж|бегущ|перебор']],
+  bass: [['808', '808|треп|трап|trap|гудящ'], ['acid', 'кислот|есид|асид|acid|303|визж|квак|резонанс'], ['deep', 'глубок|дип|deep|саб|низк|мягк|бархат|тепл'], ['offbeat', 'офбит|между долями|простой|прост'], ['rolling', 'катящ|катит|роллинг|rolling|ровн|шестнадцат|быстр|бегущ|галоп|драйв']],
+  stab: [['pad', 'пед(?![а-я])|пад(?![а-я])|pad|подложк|мрачн|тягуч'], ['chords', 'ритмичн|быстр|част|детройт|хаус'], ['sparse', 'редк|реже|раз в такт'], ['dub', 'даб|dub|ех[оа](?![а-я])|глубок|космич']],
+  lead: [['slow', 'мрачн|жутк|призрач|медленн'], ['melody', 'мелоди|напев|тем[ау](?![а-я])|риф'], ['arp', 'арп|арпедж|бегущ|перебор']],
 };
 for (const id in VARIANT_RX) VARIANT_RX[id] = VARIANT_RX[id].map(([v, s]) => [v, rx(s)]);
 
 const GENRE_RX = [
+  ['witch', 'ви?т?ч ?хаус|уич ?хаус|witch|ведьм|вичхаус|витчхаус'],
   ['acid', 'есид|асид|acid|кислотн(?:ое|ую|ого|ый) техно|кислотное|кислотняк'],
   ['minimal', 'минимал|minimal'],
   ['industrial', 'индаст|индуст|industrial'],
@@ -85,6 +87,16 @@ const R = Object.fromEntries(Object.entries({
   recStart: '(?:начни|включи|старт|запусти|начать|давай|начинай|начнем)\\S* ?запис|запиши (?:трек|все|микс|это|музык)|записывай|запись трека',
   recStop: '(?:стоп|останови|закончи|заверши|хватит|выключи|прекрати|сохрани|скачай)\\S* (?:запис|трек|файл)|сохрани|скачай|запись стоп',
   genAny: 'придумай|сочини|сгенерир|сделай|напиши|создай|замути|забацай|удиви|давай|включи|хочу|поставь|запусти|сыграй|покажи',
+  compose: 'напиши|сочини|сочиним|напишем|составь|аранжир|собери трек|построй трек',
+  songMode: 'весь трек|трек целиком|целиком|полностью|режим трека|полный трек|проиграй трек|играй трек|сыграй трек|включи трек|по частям|с аранжиров',
+  loopMode: 'петл|зацикл|режим петли|один такт|только такт|луп(?![а-я])',
+  seekStart: 'с начала|в начало|сначала|перемотай|отмотай',
+  kit: 'набор|кит(?![а-я])|комплект|пресет|звуки|звучани',
+  sound: 'звук|тембр|семпл|сампл',
+  other: 'друг(?:ой|ую|ие|ое|ая|ого|им)|следующ|смени звук|поменяй звук',
+  patWord: 'ритм|рисун|паттерн|парти|линию|линия|ноты|грув|мелоди',
+  newW: 'нов(?:ый|ую|ые|ое|ая|ого|ых)|придумай|сочини|сгенерир|случайн|перепиши|переделай',
+  also: 'тоже|также|в соло|еще и|плюс',
   genObj: 'трек|техно|бит(?![а-я])|грув|что ?нибудь|что то|музык|луп|рейв',
   build: 'нарастан|подъем|подьем|подними енерг|накал|билд|build|разгон|напряж|разогрей|нагнет|нагрей',
   drop: 'дроп|drop|взрыв|понеслась|бах(?![а-я])|врубай все',
@@ -164,7 +176,24 @@ function findInstr(c) {
     found.push({ id, at: m.index });
     w = w.replace(reg, s => ' '.repeat(s.length));
   }
-  return found.sort((a, b) => a.at - b.at).map(f => f.id);
+  let ids = found.sort((a, b) => a.at - b.at).map(f => f.id);
+  // «ритм хэтов» — это про хэты, а не про все барабаны
+  if (ids.length > 1 && ids.includes('drums') && !/барабан|ударн|драм|ударку|drums/.test(c)) ids = ids.filter(i => i !== 'drums');
+  return ids;
+}
+
+const KITW = KIT_WORDS.map(([id, s]) => [id, rx(s)]);
+const SNDW = Object.fromEntries(Object.entries(SOUND_WORDS).map(([k, l]) => [k, l.map(([id, s]) => [id, rx(s)])]));
+const findWord = (list, c) => (list.find(([, re]) => re.test(c)) || [])[0] || null;
+
+// Длина трека в минутах, если сказана: «на 3 минуты», «на полторы минуты», «на минуту».
+function minutes(c) {
+  if (/полтор/.test(c)) return 1.5;
+  const m = c.match(/(\d+) ?минут/);
+  if (m) return +m[1];
+  if (/(?<![а-я])минуту(?![а-я])/.test(c)) return 1;
+  if (/пару минут/.test(c)) return 2;
+  return null;
 }
 
 function variantsFor(ids, c) {
@@ -202,7 +231,21 @@ function parseClause(c) {
   if (R.reset.test(c)) return [A('reset')];
 
   if (!hasI) {
+    // Наборы звуков: «набор витч хаус», «звуки 808»
+    if (R.kit.test(c)) {
+      const k = findWord(KITW, c);
+      if (k) return [A('kit', { id: k })];
+    }
     const g = GENRE_RX.find(([, re]) => re.test(c));
+    const mins = minutes(c);
+    // Трек целиком: «напиши трек на 3 минуты», «сочини витч хаус», «сделай техно на 4 минуты»
+    if (mins || (R.compose.test(c) && (g || R.genObj.test(c)))) {
+      const res = g ? [A('genre', { id: g[0] })] : [];
+      return [...res, A('song', { minutes: mins })];
+    }
+    if (R.loopMode.test(c)) return [A('mode', { mode: 'loop' })];
+    if (R.songMode.test(c)) return [A('mode', { mode: 'song' })];
+    if (R.seekStart.test(c)) return [A('seek', { bar: 0 })];
     if (g) {
       const res = [A('genre', { id: g[0] })];
       const bpm = R.tempo.test(c) && firstNum(nums, 60, 200);
@@ -282,8 +325,20 @@ function parseClause(c) {
 
   if (hasI) {
     const variants = variantsFor(I, c);
+    // Звуки: «бочка 808», «звук клэпа снейр», «другой хэт»
+    const own = I.filter(i => SNDW[i]);
+    if (own.length && (R.sound.test(c) || /808|909|303/.test(c))) {
+      for (const id of own) {
+        const name = findWord(SNDW[id], c.replace(/(?<![а-я])(?:звук|тембр)\S*/g, ' '));
+        if (name) return [...out, A('sound', { tracks: [id], name })];
+      }
+      return [...out, A('sound', { tracks: I, next: true })];
+    }
+    if (R.other.test(c) && !R.patWord.test(c) && !R.newW.test(c) && !Object.keys(variants).length && !R.solo.test(c)) {
+      return [...out, A('sound', { tracks: I, next: true })];
+    }
     if (R.except.test(c)) return [...out, A(R.mute.test(c) ? 'solo' : 'mute', { tracks: I })];
-    if (R.solo.test(c)) return [...out, A('solo', { tracks: I })];
+    if (R.solo.test(c)) return [...out, A('solo', { tracks: I, add: R.also.test(c) })];
     if (R.clear.test(c)) return [...out, A('clear', { tracks: I })];
     if (R.mute.test(c)) return [...out, A('mute', { tracks: I })];
     if (R.regen.test(c)) return [...out, A('regen', { tracks: I, variants })];
@@ -302,7 +357,7 @@ function parseClause(c) {
   return [];
 }
 
-const CARRY = ['add', 'mute', 'solo', 'clear', 'regen', 'vol', 'filter', 'drive', 'decay', 'pitch', 'fx', 'density'];
+const CARRY = ['add', 'mute', 'solo', 'clear', 'regen', 'vol', 'filter', 'drive', 'decay', 'pitch', 'fx', 'density', 'sound'];
 
 export function parse(text) {
   const norm = normalize(text);
@@ -321,7 +376,10 @@ export function parse(text) {
       const near = [...parsed.slice(0, i).reverse(), ...parsed.slice(i + 1)].flat().find(b => CARRY.includes(b.type));
       if (!near) return { ...a, type: 'add' };
       const { tracks, variants, steps } = a;
-      return { ...near, tracks, variants: near.type === 'add' || near.type === 'regen' ? variants : undefined, steps: near.type === 'add' ? steps : undefined, track: near.type === 'fx' || near.type === 'filter' ? tracks[0] : near.track };
+      return {
+        ...near, tracks, variants: near.type === 'add' || near.type === 'regen' ? variants : undefined, steps: near.type === 'add' ? steps : undefined,
+        track: near.type === 'fx' || near.type === 'filter' ? tracks[0] : near.track, add: near.type === 'solo' ? true : near.add, name: undefined,
+      };
     });
   }
   return { text: norm, actions: parsed.flat() };

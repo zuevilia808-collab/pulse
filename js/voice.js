@@ -9,6 +9,7 @@ export class Voice {
     this.rec = null;
     this.session = 0;
     this.fails = 0;
+    this.denied = 0;
   }
 
   start() {
@@ -16,6 +17,7 @@ export class Voice {
     this.want = true;
     this.paused = false;
     this.fails = 0;
+    this.denied = 0;
     this.spawn();
     return true;
   }
@@ -48,6 +50,7 @@ export class Voice {
     r.onstart = () => this.h.state?.('listening');
     r.onresult = e => {
       this.fails = 0;
+      this.denied = 0;
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i], key = sid + ':' + i;
         if (res.isFinal) this.h.final?.(Array.from(res, a => a.transcript), key);
@@ -56,7 +59,9 @@ export class Voice {
     };
     r.onerror = e => {
       this.lastError = e.error;
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture') this.want = false;
+      // Отказ бывает и не из-за разрешения (микрофон ещё занят, сервис не ответил) — одна повторная попытка.
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { if (++this.denied > 1) this.want = false; }
+      if (e.error === 'audio-capture') this.want = false;
       if (e.error !== 'no-speech' && e.error !== 'aborted') this.fails++;
       this.h.error?.(e.error);
     };
