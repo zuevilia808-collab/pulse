@@ -1,6 +1,6 @@
 // Звуковой движок: синтез всех инструментов в Web Audio, секвенсор с упреждением,
 // эффекты (реверб, эхо, румбл, сайдчейн), проигрывание трека по частям, запись в WAV.
-import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=2';
+import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=3';
 
 const dbToGain = v => 10 ** (v / 20);
 const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34 };
@@ -58,11 +58,12 @@ export class Engine {
     this.limit.threshold.value = -3; this.limit.ratio.value = 20; this.limit.knee.value = 0;
     this.limit.attack.value = 0.001; this.limit.release.value = 0.06;
     this.gate = G(1);
+    this.stut = G(1); // заикание и «выключение» в конце частей трека
     this.out = G(1);
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.78;
-    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.comp).connect(this.limit)
+    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.stut).connect(this.comp).connect(this.limit)
       .connect(this.gate).connect(this.out).connect(this.analyser).connect(ctx.destination);
 
     this.silent = G(0);
@@ -114,12 +115,20 @@ export class Engine {
     this.arrG = {};
     this.sendR = {};
     this.sendD = {};
+    this.throwD = {};
+    this.throwR = {};
     for (const t of TRACKS) {
       const c = G(1), a = G(1);
       c.connect(a).connect(t.kind === 'drum' ? this.drums : this.duck);
       const r = G(0), d = G(0);
       a.connect(r).connect(this.revIn);
       a.connect(d).connect(this.dlyIn);
+      // Отдельные посылы для «бросков» эха и реверба на стыках частей
+      const td = G(0), tr = G(0);
+      a.connect(td).connect(this.dlyIn);
+      a.connect(tr).connect(this.revIn);
+      this.throwD[t.id] = td;
+      this.throwR[t.id] = tr;
       this.ch[t.id] = c;
       this.arrG[t.id] = a;
       this.sendR[t.id] = r;
@@ -284,8 +293,10 @@ export class Engine {
       if (!this.ended) { this.ended = true; this.onSongEnd?.(t0); }
       return;
     }
-    const bd = 16 * this.stepDur();
+    const bd = 16 * this.stepDur(), sd = bd / 16;
     this.cur = info;
+    this.stut.gain.cancelScheduledValues(t0);
+    this.stut.gain.setValueAtTime(1, t0);
     for (const t of TRACKS) {
       const g = this.arrG[t.id].gain;
       g.cancelScheduledValues(t0);
@@ -297,11 +308,17 @@ export class Engine {
       if (b !== a) f.exponentialRampToValueAtTime(b, t0 + bd);
     }
     for (const fx of info.fx) {
-      if (fx.type === 'riser') this.riser(t0, fx.bars * bd);
-      else if (fx.type === 'impact') this.impact(t0);
-      else if (fx.type === 'crash') this.crash(t0);
-      else if (fx.type === 'down') this.downlifter(t0, Math.min(bd * 2, 4));
-      else if (fx.type === 'swell') { const d = Math.min(bd, 2.2); this.swell(t0 + bd - d, d); }
+      const at = t0 + (fx.at || 0) * sd, end = t0 + bd;
+      if (fx.type === 'riser') this.riser(at, fx.bars * bd);
+      else if (fx.type === 'impact') this.impact(at);
+      else if (fx.type === 'crash') this.crash(at);
+      else if (fx.type === 'hit') this.hitverb(at);
+      else if (fx.type === 'down') this.downlifter(at, Math.min(bd * 2, 4));
+      else if (fx.type === 'swell') { const d = Math.min(bd, 2.2); this.swell(end - d, d); }
+      else if (fx.type === 'toms') { const k0 = fx.at || 8; for (let k = k0; k < 16; k++) this.tom(t0 + k * sd, 240 * 0.9 ** (k - k0), 0.45 + (0.5 * (k - k0)) / (16 - k0)); }
+      else if (fx.type === 'stutter') this.stutter(at, end, sd / 2);
+      else if (fx.type === 'throw') this.throwFx(fx.kind, at, sd * 4, bd);
+      else if (fx.type === 'stop') this.powerDown(at, end - at);
     }
     this.onSongBar?.(this.songPos, t0);
     this.songPos++;
@@ -673,6 +690,65 @@ export class Engine {
     o.connect(og).connect(this.fxBus);
     o.start(t);
     o.stop(t + dur);
+  }
+
+  // Том для сбивок: звук не из основного грува, поэтому сбивка слышна.
+  tom(t, f, v) {
+    const o = this.ctx.createOscillator(), g = this.G(0);
+    o.frequency.setValueAtTime(f * 1.6, t);
+    o.frequency.exponentialRampToValueAtTime(f, t + 0.04);
+    g.gain.setValueAtTime(v * 0.7, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    o.connect(g).connect(this.fxBus);
+    o.start(t);
+    o.stop(t + 0.3);
+  }
+
+  // Метка «удар в реверб»: короткий удар, который тонет в большом зале.
+  hitverb(t) {
+    const n = this.noiseSrc(t, 0.12), g = this.G(0);
+    g.gain.setValueAtTime(0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+    const send = this.G(1.1);
+    n.connect(this.F('bandpass', 1400, 0.9)).connect(g);
+    g.connect(this.fxBus);
+    g.connect(send).connect(this.revIn);
+    this.tom(t, 150, 0.9);
+    const rb = this.revOut.gain, base = this.getState().master.reverb;
+    rb.setTargetAtTime(Math.min(1.4, base + 0.5), t, 0.01);
+    rb.setTargetAtTime(base, t + 1.5, 0.4);
+  }
+
+  // Заикание: звук рубится на тридцать вторые до конца такта.
+  stutter(t, end, chop) {
+    const g = this.stut.gain;
+    let on = false;
+    for (let x = t; x < end - 1e-4; x += chop) { g.setValueAtTime(on ? 1 : 0.06, x); on = !on; }
+    g.setValueAtTime(1, end);
+  }
+
+  // Бросок эха или реверба: последний удар уходит в длинный хвост, остальное замолкает.
+  throwFx(kind, t, dur, bd) {
+    const sends = kind === 'dly' ? this.throwD : this.throwR;
+    for (const id of ['clap', 'perc', 'stab', 'lead', 'hat']) {
+      const g = sends[id].gain;
+      g.setTargetAtTime(kind === 'dly' ? 0.9 : 1.3, t, 0.004);
+      g.setTargetAtTime(0, t + dur * 0.8, 0.03);
+    }
+    if (kind === 'dly') {
+      this.fb.gain.setTargetAtTime(0.66, t, 0.01);
+      this.fb.gain.setTargetAtTime(0.42, t + bd * 1.5, 0.3);
+    } else {
+      const rb = this.revOut.gain, base = this.getState().master.reverb;
+      rb.setTargetAtTime(Math.min(1.5, base + 0.6), t, 0.01);
+      rb.setTargetAtTime(base, t + bd * 1.2, 0.4);
+    }
+  }
+
+  // «Выключение»: звук будто обесточили — фильтр и громкость падают к концу такта.
+  powerDown(t, dur) {
+    this.sLP.frequency.setTargetAtTime(160, t, dur / 3);
+    this.stut.gain.setTargetAtTime(0.2, t, dur / 2);
   }
 
   // Тарелка в начале новой фразы.

@@ -213,6 +213,9 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 .cell.tie { background: color-mix(in srgb, var(--c) 32%, transparent); border-radius: 3px; }
 .cell.sl::before { content: ''; position: absolute; left: -6px; top: 50%; width: 10px; height: 2px; background: var(--c); transform: rotate(-25deg); }
 .cell.now { box-shadow: inset 0 0 0 2px rgba(238, 243, 228, .55); }
+.cell.out { opacity: .15; pointer-events: none; }
+.seg.bank { margin: -8px 0 -6px; }
+.seg.bank button { width: 34px; flex: none; font-family: var(--mono); }
 .cell.on.now { box-shadow: inset 0 0 0 2px rgba(10, 11, 8, .35), 0 0 22px -2px var(--c); }
 
 .empty-hint {
@@ -282,10 +285,14 @@ body:not(.playing) .logo i { animation-play-state: paused; }
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; transition: background .15s;
 }
 .lc:hover { background: rgba(238, 243, 228, .12); }
-.lc.l1 { background: color-mix(in srgb, var(--c) 30%, transparent); }
-.lc.l2 { background: color-mix(in srgb, var(--c) 72%, transparent); }
-.lc.l3 { background: var(--c); box-shadow: 0 0 12px -4px var(--c); }
-.lc.l3::after { content: '+'; position: absolute; inset: 0; display: grid; place-items: center; font: 700 12px/1 var(--mono); color: var(--lime-ink); }
+.lc { font: 700 10.5px/1 var(--mono); color: var(--lime-ink); }
+.lc.l1 { --lc: color-mix(in srgb, var(--c) 30%, transparent); background: var(--lc); color: var(--text); }
+.lc.l2 { --lc: color-mix(in srgb, var(--c) 72%, transparent); background: var(--lc); }
+.lc.l3 { --lc: var(--c); background: var(--lc); box-shadow: 0 0 12px -4px var(--c); }
+.lc.l3:empty::after { content: '+'; position: absolute; inset: 0; display: grid; place-items: center; font: 700 12px/1 var(--mono); color: var(--lime-ink); }
+.lc.late { background: linear-gradient(90deg, rgba(238, 243, 228, .045) var(--e), var(--lc) var(--e)); }
+.heropop { width: min(460px, calc(100vw - 16px)); }
+.lvlpop { width: min(440px, calc(100vw - 16px)); }
 .lc.empty { opacity: .35; }
 .sph { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, .7); pointer-events: none; border-radius: 1px; }
 

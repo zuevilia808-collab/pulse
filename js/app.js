@@ -2,14 +2,14 @@
 import {
   TRACKS, TRACK, emptyState, fixState, keyLabel, noteName, isEmpty, makePattern, denser, sparser, genreState,
   GENRES, GENRE_IDS, defaultVariant, VARIANT_RU, VARIANTS, emptySteps, NOTE_RU, SCALE_RU, snap, covered, semiToDeg, deg, pick, soundParams,
-} from './music.js?v=2';
-import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=2';
-import { PART, INS, OUTS, FILTERS, PROGS, LANES, SCRIPTS, writeSong, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=2';
-import { Engine, renderSong } from './engine.js?v=2';
-import { parse, normalize, QUICK } from './commands.js?v=2';
-import { Voice } from './voice.js?v=2';
-import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=2';
-import { Viz } from './viz.js?v=2';
+} from './music.js?v=3';
+import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=3';
+import { PART, INS, OUTS, FILTERS, PROGS, HEADS, SHAPES, FORMS, LANES, compose, rerollSection, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=3';
+import { Engine, renderSong } from './engine.js?v=3';
+import { parse, normalize, QUICK } from './commands.js?v=3';
+import { Voice } from './voice.js?v=3';
+import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=3';
+import { Viz } from './viz.js?v=3';
 
 const STORE = 'pulse.state.v1';
 const $ = s => document.querySelector(s);
@@ -43,6 +43,7 @@ let recording = false, recStartedAt = 0, rendering = false;
 const stepQ = [], songQ = [];
 const rows = {};
 let playhead = -1, songAt = -1;
+let bank = 0; // какой рисунок показывает секвенсор: 0 — A (основной), 1 — B, 2 — C
 const pendingMute = new Set(); // «убери» ждёт начала доли; «верни» до этого момента его отменяет
 
 // ——— Хранение и отмена ———
@@ -151,23 +152,23 @@ function startSongAt(bar) {
   else { engine.songPos = bar; engine.seekTo = null; play(); }
 }
 
-function composeSong(minutes) {
+// Сочинить трек. Номер варианта (seed) определяет всё: с тем же номером получится тот же трек.
+function composeSong(minutes, seed) {
   const min = clamp(minutes || state.songMin || 3, 1, 5);
   state.songMin = min;
   if (isAllEmpty()) state = genreState(state, state.genre || 'peak');
-  const genre = state.genre;
-  state.song = writeSong(state, min, genre);
-  // Дорожки, которые нужны сценарию, но пока пустые, — сочиняем.
-  for (const id of LANES) {
-    const tr = state.tracks[id];
-    if (isEmpty(tr) && state.song.sections.some(s => s.lv[id])) setPattern(id, SOUNDS[id][tr.sound].v || defaultVariant(id, genre));
-  }
+  const sd = seed || 1 + Math.floor(Math.random() * 99999);
+  state.song = compose(state, min, state.genre, sd);
   for (const t of TRACKS) { state.tracks[t.id].mute = false; state.tracks[t.id].solo = false; }
   breakSet = null;
+  bank = 0;
   startSongAt(0);
-  const secs = state.song.sections;
-  return `Сочинил трек на ${fmtTime(songBars(state.song) * barSec(state.bpm))}: ${secs.map(s => PART[s.type].name.toLowerCase()).join(' → ')}`;
+  const song = state.song, path = song.sections.map(x => PART[x.type].name.toLowerCase()).filter((x, i, a) => x !== a[i - 1]);
+  return `Вариант №${sd} · форма «${FORMS[song.form].name}» · ${fmtTime(songBars(song) * barSec(state.bpm))}: ${path.join(' → ')}`;
 }
+
+const heroLabel = h => (h && h.id !== 'none' ? `${NAME[h.id]} · ${SHAPES[h.shape]}` : 'нет');
+const stepsOf = id => (bank && state.song && state.song.alt && state.song.alt[id] && state.song.alt[id][bank - 1]) || state.tracks[id].steps;
 
 function setMode(mode) {
   if (mode === 'song' && !state.song) return composeSong(state.songMin);
@@ -249,7 +250,7 @@ async function exec(a) {
       play();
       return `${g.name} · ${g.bpm} BPM${g.feel ? ` (${g.feel})` : ''} · звуки «${KITS[g.kit].name}»`;
     }
-    case 'song': return composeSong(a.minutes);
+    case 'song': return composeSong(a.minutes, a.reroll ? null : a.seed);
     case 'mode': return setMode(a.mode);
     case 'seek':
       if (!state.song) return 'Трек ещё не сочинён — скажи «напиши трек»';
@@ -790,12 +791,12 @@ const EXAMPLES = [
   'сделай техно', 'сделай витч хаус', 'напиши трек на 3 минуты', 'добавь бочку', 'хэты на офбит', 'кислотный бас', 'клэп на 2 и 4',
   'бочка 808', 'набор витч хаус', 'звуки 808', 'набор эсид', 'новый бас', 'новый ритм хэтов', 'дабовые аккорды', 'нарастание', 'брейк', 'дроп',
   'напою бас', 'битбокс', 'добавь румбл', 'только бас', 'верни всё', 'сделай минимал', 'придумай мелодию', 'тональность ре минор',
-  'сделай эсид', 'добавь перкуссию', 'хард-техно', 'играй весь трек', 'мрачные аккорды', 'хэты трэп', 'сочини мелодик-техно',
+  'сделай эсид', 'добавь перкуссию', 'хард-техно', 'играй весь трек', 'мрачные аккорды', 'хэты трэп', 'сочини мелодик-техно', 'другой вариант', 'сочини хард-техно',
 ];
 
 const HELP = [
   ['Начать', ['сделай техно', 'сделай эсид', 'сделай витч хаус', 'сделай минимал', 'сделай даб-техно', 'сделай индастриал', 'сделай гипнотик', 'хард-техно', 'детройт', 'поехали', 'стоп', 'новый трек']],
-  ['Трек целиком', ['напиши трек на 3 минуты', 'сочини витч хаус', 'сделай техно на 5 минут', 'трек на полторы минуты', 'играй весь трек', 'режим петли', 'с начала', 'брейк', 'дроп', 'сохрани']],
+  ['Трек целиком', ['напиши трек на 3 минуты', 'другой вариант', 'вариант 777', 'сочини витч хаус', 'сделай техно на 5 минут', 'трек на полторы минуты', 'играй весь трек', 'режим петли', 'с начала', 'брейк', 'дроп', 'сохрани']],
   ['Звуки', ['другая бочка', 'другой клэп', 'другой хэт', 'другой открытый хэт', 'другая перкуссия', 'другой бас', 'другие аккорды', 'другой синт', 'бочка 808', 'клэп 909', 'бас 303', 'звук клэпа снейр', 'набор витч хаус', 'звуки 808', 'набор эсид', 'набор индастриал']],
   ['Инструменты и рисунки', ['добавь бочку', 'ломаная бочка', 'хэты на офбит', 'частые хэты', 'хэты трэп', 'клэп на 2 и 4', 'добавь открытый хэт', 'добавь перкуссию', 'кислотный бас', 'глубокий бас', 'бас 808', 'дабовые аккорды', 'мрачные аккорды', 'придумай мелодию', 'добавь румбл', 'новый бас', 'новый ритм хэтов', 'новые аккорды']],
   ['Убрать и соло', ['убери бочку', 'верни бочку', 'только бас', 'только бочка и бас', 'соло хэт тоже', 'верни всё', 'убери всё кроме бочки', 'очисти хэты', 'больше хэтов', 'проще бас']],
@@ -889,24 +890,28 @@ function renderTransport() {
 
 function renderGrid() {
   const anySolo = TRACKS.some(t => state.tracks[t.id].solo);
+  const hasAlt = !!(state.song && state.song.alt);
+  if (!hasAlt) bank = 0;
+  $('#bankSeg').hidden = !hasAlt;
+  document.querySelectorAll('#bankSeg button').forEach(b => b.classList.toggle('on', +b.dataset.b === bank));
   for (const t of TRACKS) {
-    const tr = state.tracks[t.id], r = rows[t.id];
+    const tr = state.tracks[t.id], r = rows[t.id], steps = stepsOf(t.id), L = steps.length;
     r.row.classList.toggle('muted', tr.mute || (anySolo && !tr.solo));
-    r.row.classList.toggle('empty', isEmpty(tr));
+    r.row.classList.toggle('empty', !steps.some(Boolean));
     r.m.classList.toggle('on', tr.mute);
     r.s.classList.toggle('on', tr.solo);
     r.snd.textContent = SOUNDS[t.id][tr.sound].name;
     if (document.activeElement !== r.vol) r.vol.value = tr.p.vol;
     if (t.kind === 'drum') {
       r.cells.forEach((c, i) => {
-        const v = tr.steps[i];
-        c.className = 'cell' + (v ? ' on' : '') + (v >= 1 ? ' acc' : '') + (v && v < 0.7 ? ' ghost' : '') + (i === playhead ? ' now' : '');
+        const v = steps[i];
+        c.className = 'cell' + (i >= L ? ' out' : '') + (v ? ' on' : '') + (v >= 1 ? ' acc' : '') + (v && v < 0.7 ? ' ghost' : '') + (i === playhead ? ' now' : '');
         c.textContent = '';
       });
     } else {
       r.cells.forEach((c, i) => {
-        const n = tr.steps[i], tie = !n && covered(tr.steps, i);
-        c.className = 'cell' + (n ? ' on' : '') + (tie ? ' tie' : '') + (n && n.acc ? ' acc' : '') + (n && n.slide ? ' sl' : '') + (i === playhead ? ' now' : '');
+        const n = steps[i], tie = !n && covered(steps, i);
+        c.className = 'cell' + (i >= L ? ' out' : '') + (n ? ' on' : '') + (tie ? ' tie' : '') + (n && n.acc ? ' acc' : '') + (n && n.slide ? ' sl' : '') + (i === playhead ? ' now' : '');
         c.textContent = n ? noteName(state.key, n.n) + (n.n >= 12 ? '↑' : n.n < 0 ? '↓' : '') : '';
       });
     }
@@ -938,11 +943,16 @@ function renderSound() {
 }
 
 // ——— Трек: части, дорожки, энергия ———
+const IN_ICON = { impact: '✸', crash: '◎', hit: '◉', down: '↘', fake: '✕' };
+const OUT_ICON = { fill: '⋯', toms: '⁘', kickroll: '⁞', stutter: '≋', scoop: '◡', swell: '◢', delay: '⟳', wash: '≈', stop: '⏻', gap: '▢', rise: '↗' };
 function renderSongCard() {
   const song = state.song, box = $('#songTl');
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === state.mode));
   $('#lenVal').textContent = fmtMin(state.songMin);
   $('#renderBtn').hidden = !song;
+  $('#rerollBtn').hidden = !song;
+  $('#heroBtn').hidden = !song;
+  if (song) $('#heroBtn span').textContent = `Герой: ${heroLabel(song.hero)}`;
   $('#songEmpty').hidden = !!song;
   box.hidden = !song;
   if (!song) {
@@ -951,20 +961,24 @@ function renderSongCard() {
     return;
   }
   const total = songBars(song);
-  $('#songSub').textContent = `${fmtTime(total * barSec(state.bpm))} · ${total} ${plural(total, 'такт', 'такта', 'тактов')} · сценарий «${SCRIPTS[song.genre]?.name || 'свой'}»`;
+  $('#songSub').textContent = `${song.seed ? `вариант №${song.seed} · ` : ''}«${(FORMS[song.form] || {}).name || 'своя форма'}» · ${fmtTime(total * barSec(state.bpm))} · ${total} ${plural(total, 'такт', 'такта', 'тактов')}`;
   const cols = `var(--lw) ${song.sections.map(s => `minmax(38px, ${s.bars}fr)`).join(' ')}`;
   let h = `<div class="tl" style="grid-template-columns:${cols}"><div class="corner"><svg class="energy-lbl"><use href="#i-bolt"/></svg></div>`
     + `<div class="en" style="grid-column:2/-1"><svg id="energy" preserveAspectRatio="none"></svg></div><span></span>`;
   song.sections.forEach((s, i) => {
     const P = PART[s.type];
-    const ic = (s.in !== 'none' ? `<i title="Вход: ${INS[s.in]}">${{ impact: '✸', crash: '◎', down: '↘' }[s.in]}</i>` : '')
-      + (s.out !== 'none' ? `<i title="Конец: ${OUTS[s.out]}">${{ fill: '⋯', swell: '◢', rise: '↗', gap: '▢' }[s.out]}</i>` : '');
+    const ic = (s.in && s.in !== 'none' ? `<i title="Вход: ${INS[s.in]}">${IN_ICON[s.in] || '•'}</i>` : '')
+      + (s.head && s.head !== 'none' ? `<i title="Начало: ${HEADS[s.head]}">${s.head === 'scoop' ? '◡' : '·'}</i>` : '')
+      + (s.out && s.out !== 'none' ? `<i title="Конец: ${OUTS[s.out]}">${OUT_ICON[s.out] || '•'}</i>` : '');
     h += `<button class="sec" data-i="${i}" style="--c:${P.color}" title="${P.hint}"><b>${P.name}</b><small>${s.bars} т.</small><span class="ic">${ic}</span></button>`;
   });
   for (const id of LANES) {
     const t = TRACK[id], emptyT = isEmpty(state.tracks[id]);
     h += `<span class="ln${emptyT ? ' empty' : ''}" style="--c:${t.color}">${SHORT[id]}</span>`;
-    song.sections.forEach((s, i) => { h += `<button class="lc l${s.lv[id] || 0}${emptyT ? ' empty' : ''}" data-i="${i}" data-id="${id}" style="--c:${t.color}" aria-label="${NAME[id]}, ${PART[s.type].name}"></button>`; });
+    song.sections.forEach((s, i) => {
+      const l = s.lv[id] || 0, pi = (s.pat && s.pat[id]) || 0, en = (s.enter && s.enter[id]) || 0;
+      h += `<button class="lc l${l}${emptyT ? ' empty' : ''}${l && en ? ' late' : ''}" data-i="${i}" data-id="${id}" style="--c:${t.color}${en ? `;--e:${en * 100}%` : ''}" aria-label="${NAME[id]}, ${PART[s.type].name}">${l && pi ? 'ABC'[pi] : ''}</button>`;
+    });
   }
   h += '<div class="sph" id="sph" hidden></div></div>';
   box.innerHTML = h;
@@ -1069,7 +1083,7 @@ function openNotePop(cell, id, i) {
   openPop(cell, html, 'notepop', { kind: 'note', id, i, cell });
 }
 function noteHtml(id, i) {
-  const tr = state.tracks[id], n = tr.steps[i], cur = n ? n.n : null, sc = state.scale;
+  const n = stepsOf(id)[i], cur = n ? n.n : null, sc = state.scale;
   const ranges = [[7, '↑'], [0, ''], [-7, '↓']];
   let h = `<div class="ph"><b>${NAME[id]}</b><span>шаг ${i + 1}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div><div class="notes">`;
   for (const [d0, lab] of ranges) {
@@ -1088,11 +1102,11 @@ function noteHtml(id, i) {
   return h;
 }
 function noteAction(btn) {
-  const { id, i } = popState, tr = state.tracks[id], a = btn.dataset.a;
+  const { id, i } = popState, tr = state.tracks[id], a = btn.dataset.a, steps = stepsOf(id);
   if (a === 'close') { closePop(); return; }
   pushUndo();
-  let n = tr.steps[i];
-  const make = () => { if (!n) { n = tr.steps[i] = { n: 0, len: 1 }; } return n; };
+  let n = steps[i];
+  const make = () => { if (!n) { n = steps[i] = { n: 0, len: 1 }; } return n; };
   if (a === 'note') {
     make().n = +btn.dataset.n;
     tr.mute = false;
@@ -1101,10 +1115,10 @@ function noteAction(btn) {
   } else if (a === 'acc') make().acc = !n.acc;
   else if (a === 'slide') make().slide = !n.slide;
   else if (a === 'len') {
-    const L = Math.min(+btn.dataset.v, 16 - i);
+    const L = Math.min(+btn.dataset.v, steps.length - i);
     make().len = L;
-    for (let k = i + 1; k < i + L; k++) tr.steps[k] = null;
-  } else if (a === 'del') { tr.steps[i] = null; closePop(); }
+    for (let k = i + 1; k < i + L; k++) steps[k] = null;
+  } else if (a === 'del') { steps[i] = null; closePop(); }
   save();
   renderGrid();
   if (popEl && popState && popState.kind === 'note') { popEl.innerHTML = noteHtml(id, i); }
@@ -1156,11 +1170,12 @@ function secHtml(i) {
     + `<div class="prow"><span>Часть</span><div class="opts">${opt('type', PART, s.type)}</div></div>`
     + `<div class="prow"><span>Длина</span><div class="opts"><button class="tg" data-a="len" data-v="-4">−4</button><button class="tg" data-a="len" data-v="-1">−1</button><b class="bars">${s.bars}</b><button class="tg" data-a="len" data-v="1">+1</button><button class="tg" data-a="len" data-v="4">+4</button></div></div>`
     + `<div class="prow"><span>Вход</span><div class="opts">${opt('in', INS, s.in)}</div></div>`
+    + `<div class="prow"><span>Начало</span><div class="opts">${opt('head', HEADS, s.head || 'none')}</div></div>`
     + `<div class="prow"><span>Конец</span><div class="opts">${opt('out', OUTS, s.out)}</div></div>`
     + `<div class="prow"><span>Фильтр</span><div class="opts">${opt('filter', FILTERS, s.filter)}</div></div>`
     + `<div class="prow"><span>Гармония</span><div class="opts">${opt('prog', PROGS, s.prog)}</div></div>`
     + `<div class="pfoot"><button class="tg lime" data-a="play">▶ Играть отсюда</button><button class="tg" data-a="left"${i ? '' : ' disabled'}>←</button><button class="tg" data-a="right"${i < n - 1 ? '' : ' disabled'}>→</button>`
-    + `<button class="tg" data-a="dup">Копия</button><button class="tg del" data-a="del"${n > 1 ? '' : ' disabled'}>Удалить</button></div>`;
+    + `<button class="tg" data-a="reroll">🎲 Пересочинить часть</button><button class="tg" data-a="dup">Копия</button><button class="tg del" data-a="del"${n > 1 ? '' : ' disabled'}>Удалить</button></div>`;
 }
 function secAction(btn) {
   const a = btn.dataset.a, v = btn.dataset.v, secs = state.song.sections;
@@ -1175,6 +1190,8 @@ function secAction(btn) {
   else if (a === 'out') s.out = v;
   else if (a === 'filter') s.filter = v;
   else if (a === 'prog') s.prog = v;
+  else if (a === 'head') s.head = v;
+  else if (a === 'reroll') { rerollSection(state, i); setDid(`Часть «${PART[s.type].name}» пересочинена`); }
   else if (a === 'left' && i > 0) { [secs[i - 1], secs[i]] = [secs[i], secs[i - 1]]; i--; }
   else if (a === 'right' && i < secs.length - 1) { [secs[i + 1], secs[i]] = [secs[i], secs[i + 1]]; i++; }
   else if (a === 'dup') { secs.splice(i + 1, 0, structuredClone(s)); i++; }
@@ -1186,10 +1203,31 @@ function secAction(btn) {
 
 // Окошко уровня дорожки в части (долгое нажатие на клетку трека).
 const LVL = ['Выкл', 'Легко', 'Полностью', 'Плотно'];
+const ENTER = [[0, 'Сразу'], [0.25, 'С ¼'], [0.5, 'С середины'], [0.75, 'С ¾']];
 function openLevelPop(cell) {
-  const i = +cell.dataset.i, id = cell.dataset.id, cur = state.song.sections[i].lv[id] || 0;
-  openPop(cell, `<div class="ph"><b>${NAME[id]}</b><span>${PART[state.song.sections[i].type].name}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
-    + `<div class="lvls">${LVL.map((l, k) => `<button class="tg${k === cur ? ' on' : ''}" data-a="lv" data-v="${k}">${l}</button>`).join('')}</div>`, 'lvlpop', { kind: 'lvl', i, id });
+  const i = +cell.dataset.i, id = cell.dataset.id;
+  openPop(cell, levelHtml(i, id), 'lvlpop', { kind: 'lvl', i, id });
+}
+function levelHtml(i, id) {
+  const s = state.song.sections[i], cur = s.lv[id] || 0, pi = (s.pat && s.pat[id]) || 0, en = (s.enter && s.enter[id]) || 0;
+  const alt = state.song.alt && state.song.alt[id];
+  const btn = (a, v, label, on) => `<button class="tg${on ? ' on' : ''}" data-a="${a}" data-v="${v}">${label}</button>`;
+  return `<div class="ph"><b>${NAME[id]}</b><span>${PART[s.type].name} · ${s.bars} т.</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="prow"><span>Громкость</span><div class="opts">${LVL.map((l, k) => btn('lv', k, l, k === cur)).join('')}</div></div>`
+    + (alt ? `<div class="prow"><span>Рисунок</span><div class="opts">${['A', 'B', 'C'].map((l, k) => btn('pat', k, l + (k && alt[k - 1].length !== 16 ? ` (${alt[k - 1].length})` : ''), k === pi)).join('')}</div></div>` : '')
+    + `<div class="prow"><span>Вступает</span><div class="opts">${ENTER.map(([v, l]) => btn('enter', v, l, v === en)).join('')}</div></div>`;
+}
+
+// Окошко «главного героя»: какой инструмент разгорается через весь трек и как.
+function openHeroPop(anchor) {
+  openPop(anchor, heroHtml(), 'heropop', { kind: 'hero' });
+}
+function heroHtml() {
+  const h = state.song.hero || { id: 'none', shape: 'arc' };
+  const btn = (a, v, label, on) => `<button class="tg${on ? ' on' : ''}" data-a="${a}" data-v="${v}">${label}</button>`;
+  return `<div class="ph"><b>Главный герой</b><span>разгорается и затухает через весь трек</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="prow"><span>Кто</span><div class="opts">${btn('id', 'none', 'Нет', h.id === 'none')}${LANES.map(id => btn('id', id, NAME[id], h.id === id)).join('')}</div></div>`
+    + `<div class="prow"><span>Как</span><div class="opts">${Object.entries(SHAPES).map(([k, v]) => btn('shape', k, v, h.shape === k)).join('')}</div></div>`;
 }
 
 // ——— Мелочи интерфейса ———
@@ -1332,14 +1370,26 @@ function bind() {
     else if (popState.kind === 'sec') secAction(b);
     else if (popState.kind === 'lvl') {
       pushUndo();
-      state.song.sections[popState.i].lv[popState.id] = +b.dataset.v;
-      closePop();
+      const sec = state.song.sections[popState.i], id = popState.id, v = +b.dataset.v;
+      if (b.dataset.a === 'lv') sec.lv[id] = v;
+      else if (b.dataset.a === 'pat') { sec.pat = sec.pat || {}; if (v) sec.pat[id] = v; else delete sec.pat[id]; }
+      else if (b.dataset.a === 'enter') { sec.enter = sec.enter || {}; if (v) sec.enter[id] = v; else delete sec.enter[id]; }
       save();
       renderSongCard();
+      const cell = document.querySelector(`#songTl .lc[data-i="${popState.i}"][data-id="${id}"]`);
+      popEl.innerHTML = levelHtml(popState.i, id);
+      if (cell) placePop(cell);
+    } else if (popState.kind === 'hero') {
+      pushUndo();
+      const h = state.song.hero = state.song.hero || { id: 'none', shape: 'arc' };
+      h[b.dataset.a] = b.dataset.v;
+      save();
+      renderSongCard();
+      popEl.innerHTML = heroHtml();
     }
   });
   document.addEventListener('pointerdown', e => {
-    if (popEl && !popEl.contains(e.target) && !e.target.closest('.sec, .nm, .vb')) closePop();
+    if (popEl && !popEl.contains(e.target) && !e.target.closest?.('.sec, .nm, .vb, #heroBtn')) closePop();
   }, true);
   window.addEventListener('resize', () => { closePop(); drawEnergy(); });
   document.addEventListener('scroll', e => { if (popEl && !popEl.contains(e.target)) closePop(); }, true);
@@ -1406,35 +1456,37 @@ function bind() {
     if (e.target.closest('.m')) { tr.mute = !tr.mute; if (id === 'bass' && tr.mute) engine.releaseBass(); }
     else if (e.target.closest('.s')) tr.solo = !tr.solo; // соло можно включить у нескольких дорожек
     else if (e.target.closest('.cell')) {
-      const i = rows[id].cells.indexOf(e.target.closest('.cell'));
+      const i = rows[id].cells.indexOf(e.target.closest('.cell')), steps = stepsOf(id);
+      if (i >= steps.length) return; // за пределами полиметрической фразы
       pushUndo();
       if (TRACK[id].kind === 'drum') {
-        const v = tr.steps[i];
-        tr.steps[i] = !v ? 0.85 : v < 1 ? 1 : 0;
+        const v = steps[i];
+        steps[i] = !v ? 0.85 : v < 1 ? 1 : 0;
       } else {
-        const n = tr.steps[i];
+        const n = steps[i];
         if (n && e.shiftKey) n.acc = !n.acc;
         else if (n && e.altKey) n.slide = !n.slide;
-        else if (n) tr.steps[i] = null;
-        else if (covered(tr.steps, i)) {
-          for (let j = i - 1; j >= 0; j--) if (tr.steps[j]) { tr.steps[j].len = i - j; break; }
-        } else tr.steps[i] = { n: 0, len: 1 };
+        else if (n) steps[i] = null;
+        else if (covered(steps, i)) {
+          for (let j = i - 1; j >= 0; j--) if (steps[j]) { steps[j].len = i - j; break; }
+        } else steps[i] = { n: 0, len: 1 };
       }
       tr.mute = false;
-      if (!engine.playing && tr.steps.some(Boolean)) play();
+      if (!engine.playing && steps.some(Boolean)) play();
     } else return;
     commit();
   });
   onHold($('#grid'), '.cell', cell => {
     const row = cell.closest('.row'), id = row.dataset.id;
-    if (TRACK[id].kind === 'drum') return;
+    const i = rows[id].cells.indexOf(cell);
+    if (TRACK[id].kind === 'drum' || i >= stepsOf(id).length) return;
     ensureAudio();
-    openNotePop(cell, id, rows[id].cells.indexOf(cell));
+    openNotePop(cell, id, i);
   });
   $('#grid').addEventListener('wheel', e => {
     const cell = e.target.closest('.cell'), row = e.target.closest('.row');
     if (!cell || !row || TRACK[row.dataset.id].kind === 'drum') return;
-    const n = state.tracks[row.dataset.id].steps[rows[row.dataset.id].cells.indexOf(cell)];
+    const n = stepsOf(row.dataset.id)[rows[row.dataset.id].cells.indexOf(cell)];
     if (!n) return;
     e.preventDefault();
     n.n = clamp(deg(state.scale, semiToDeg(n.n, state.scale) + (e.deltaY < 0 ? 1 : -1)), -12, 24);
@@ -1459,6 +1511,19 @@ function bind() {
     save();
     renderSongCard();
   });
+  $('#rerollBtn').addEventListener('click', () => act({ type: 'song', minutes: state.songMin, reroll: true }, 'другой вариант трека'));
+  $('#heroBtn').addEventListener('click', e => {
+    if (popState && popState.kind === 'hero') { closePop(); return; }
+    openHeroPop(e.currentTarget);
+  });
+  $('#bankSeg').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    bank = +b.dataset.b;
+    closePop();
+    renderGrid();
+    setDid(bank ? `Секвенсор показывает рисунок ${'ABC'[bank]} — его тоже можно править` : 'Секвенсор показывает основной рисунок A');
+  });
   $('#writeBtn').addEventListener('click', () => act({ type: 'song', minutes: state.songMin }, `сочини трек на ${fmtMin(state.songMin)}`));
   $('#renderBtn').addEventListener('click', async () => { const r = await saveSongWav(); setDid(r); log('сохрани трек', r, true); });
   $('#songTl').addEventListener('click', e => {
@@ -1480,7 +1545,7 @@ function bind() {
   new ResizeObserver(() => drawEnergy()).observe($('#songTl'));
 
   document.addEventListener('keydown', e => {
-    if (e.target.closest('input, select, textarea')) return;
+    if (e.target.closest?.('input, select, textarea')) return;
     if (e.key === 'Escape' && popEl) { closePop(); return; }
     if (e.code === 'Space') {
       e.preventDefault();

@@ -1,5 +1,5 @@
 // Музыкальная часть «Пульса»: лады, дорожки, паттерны, генераторы и жанры.
-import { SOUNDS, KITS } from './sounds.js?v=2';
+import { SOUNDS, KITS } from './sounds.js?v=3';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const NOTE_RU = ['До', 'До-диез', 'Ре', 'Ми-бемоль', 'Ми', 'Фа', 'Фа-диез', 'Соль', 'Соль-диез', 'Ля', 'Си-бемоль', 'Си'];
@@ -104,7 +104,7 @@ export function fixState(s) {
   return out;
 }
 
-const rnd = Math.random;
+const rnd = () => Math.random(); // через функцию — чтобы сочинение с номером варианта могло подменить случайность
 export const pick = a => a[Math.floor(rnd() * a.length)];
 function wpick(list) {
   let sum = 0;
