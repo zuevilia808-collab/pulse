@@ -1,7 +1,7 @@
 // Разбор русских голосовых команд в список действий.
 // Работает по корням слов, поэтому понимает «бочку», «бочка», «бочки», «хэты», «хай-хэт» и т. п.
-import { VARIANTS } from './music.js';
-import { KIT_WORDS, SOUND_WORDS } from './sounds.js';
+import { VARIANTS } from './music.js?v=2';
+import { KIT_WORDS, SOUND_WORDS } from './sounds.js?v=2';
 
 const B = '(?<![а-яa-z0-9])';
 const rx = s => new RegExp(B + '(?:' + s + ')');

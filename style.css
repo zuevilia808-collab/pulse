@@ -238,13 +238,14 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 .kit.on b { color: var(--lime); }
 .voices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .vb {
-  display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 10px 0 12px; border-radius: 12px; text-align: left;
+  display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 10px 0 12px; border-radius: 12px; text-align: left;
   background: var(--card2); border: 1px solid var(--line2); min-width: 0; transition: border-color .2s;
 }
 .vb:hover { border-color: color-mix(in srgb, var(--c) 55%, transparent); }
 .vb .dot { width: 8px; height: 8px; border-radius: 3px; background: var(--c); flex: none; }
-.vb .vn { color: var(--muted); font-size: 12.5px; flex: none; }
-.vb b { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vb .vt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vb .vn { color: var(--muted); font-size: 11.5px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vb b { font-size: 13.5px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vb svg { width: 15px; height: 15px; color: var(--muted); }
 
 /* ——— Трек ——— */
@@ -427,7 +428,6 @@ body:not(.playing) .logo i { animation-play-state: paused; }
   .knobs { grid-template-columns: 1fr 1fr; gap: 12px; }
   .voices { grid-template-columns: 1fr 1fr; }
   .vb { padding: 0 8px 0 10px; gap: 6px; }
-  .vb .vn { display: none; }
   .card-h { flex-wrap: wrap; }
   .song-tl { --lw: 58px; }
   .prow { grid-template-columns: 1fr; gap: 4px; }

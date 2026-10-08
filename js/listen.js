@@ -1,5 +1,5 @@
 // Голос → музыка: захват микрофона, распознавание высоты (YIN) и битбокса (спектральный поток).
-import { SCALES, snap } from './music.js';
+import { SCALES, snap } from './music.js?v=2';
 
 export class Mic {
   constructor(engine) {

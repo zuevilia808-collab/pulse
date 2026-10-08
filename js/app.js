@@ -2,14 +2,14 @@
 import {
   TRACKS, TRACK, emptyState, fixState, keyLabel, noteName, isEmpty, makePattern, denser, sparser, genreState,
   GENRES, GENRE_IDS, defaultVariant, VARIANT_RU, VARIANTS, emptySteps, NOTE_RU, SCALE_RU, snap, covered, semiToDeg, deg, pick, soundParams,
-} from './music.js';
-import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js';
-import { PART, INS, OUTS, FILTERS, PROGS, LANES, SCRIPTS, writeSong, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js';
-import { Engine, renderSong } from './engine.js';
-import { parse, normalize, QUICK } from './commands.js';
-import { Voice } from './voice.js';
-import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js';
-import { Viz } from './viz.js';
+} from './music.js?v=2';
+import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=2';
+import { PART, INS, OUTS, FILTERS, PROGS, LANES, SCRIPTS, writeSong, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=2';
+import { Engine, renderSong } from './engine.js?v=2';
+import { parse, normalize, QUICK } from './commands.js?v=2';
+import { Voice } from './voice.js?v=2';
+import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=2';
+import { Viz } from './viz.js?v=2';
 
 const STORE = 'pulse.state.v1';
 const $ = s => document.querySelector(s);
@@ -826,7 +826,7 @@ function buildUI() {
     + `<div class="pl"><span>${p.label}</span><b></b></div><button class="pm" data-cmd="${p.plus}" aria-label="${p.plus}">+</button></div>`).join('');
 
   $('#kits').innerHTML = KIT_IDS.map(k => `<button class="kit" data-kit="${k}"><b>${KITS[k].name}</b><small>${KITS[k].desc}</small></button>`).join('');
-  $('#voices').innerHTML = TRACKS.map(t => `<button class="vb" data-id="${t.id}" style="--c:${t.color}"><span class="dot"></span><span class="vn">${t.name}</span><b></b><svg><use href="#i-down"/></svg></button>`).join('');
+  $('#voices').innerHTML = TRACKS.map(t => `<button class="vb" data-id="${t.id}" style="--c:${t.color}"><span class="dot"></span><span class="vt"><span class="vn">${t.name}</span><b></b></span><svg><use href="#i-down"/></svg></button>`).join('');
 
   const knobs = $('#knobs');
   knobs.innerHTML = '';

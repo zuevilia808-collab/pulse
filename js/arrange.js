@@ -1,6 +1,6 @@
 // Аранжировка: как из одного такта сделать трек на 1–5 минут.
 // SCRIPTS — сценарии жанров, по ним «Пульс» сам строит трек. То же самое словами — в ARRANGEMENT.md.
-import { TRACK, isEmpty, deg, semiToDeg } from './music.js';
+import { TRACK, isEmpty, deg, semiToDeg } from './music.js?v=2';
 
 export const LANES = ['kick', 'clap', 'hat', 'ohat', 'perc', 'bass', 'stab', 'lead'];
 

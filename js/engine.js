@@ -1,6 +1,6 @@
 // Звуковой движок: синтез всех инструментов в Web Audio, секвенсор с упреждением,
 // эффекты (реверб, эхо, румбл, сайдчейн), проигрывание трека по частям, запись в WAV.
-import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js';
+import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=2';
 
 const dbToGain = v => 10 ** (v / 20);
 const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34 };

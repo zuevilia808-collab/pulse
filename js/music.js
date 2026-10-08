@@ -1,5 +1,5 @@
 // Музыкальная часть «Пульса»: лады, дорожки, паттерны, генераторы и жанры.
-import { SOUNDS, KITS } from './sounds.js';
+import { SOUNDS, KITS } from './sounds.js?v=2';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const NOTE_RU = ['До', 'До-диез', 'Ре', 'Ми-бемоль', 'Ми', 'Фа', 'Фа-диез', 'Соль', 'Соль-диез', 'Ля', 'Си-бемоль', 'Си'];
