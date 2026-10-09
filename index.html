@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Unbounded:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -26,6 +26,9 @@
   <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></symbol>
   <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="9" cy="9" r=".9" fill="currentColor"/><circle cx="15" cy="15" r=".9" fill="currentColor"/><circle cx="15" cy="9" r=".9" fill="currentColor"/><circle cx="9" cy="15" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-first" viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M18 5.5v13a.8.8 0 0 1-1.2.7L8.6 12.7a.8.8 0 0 1 0-1.4l8.2-6.5a.8.8 0 0 1 1.2.7Z" fill="currentColor"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M11.5 6.3v11.4a.7.7 0 0 1-1.1.5L3.3 12.6a.7.7 0 0 1 0-1.2l7.1-5.6a.7.7 0 0 1 1.1.5ZM21 6.3v11.4a.7.7 0 0 1-1.1.5l-7.1-5.6a.7.7 0 0 1 0-1.2l7.1-5.6a.7.7 0 0 1 1.1.5Z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M12.5 6.3v11.4a.7.7 0 0 0 1.1.5l7.1-5.6a.7.7 0 0 0 0-1.2l-7.1-5.6a.7.7 0 0 0-1.1.5ZM3 6.3v11.4a.7.7 0 0 0 1.1.5l7.1-5.6a.7.7 0 0 0 0-1.2L4.1 5.8a.7.7 0 0 0-1.1.5Z" fill="currentColor" stroke="none"/></symbol>
   <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
 </svg>
 
@@ -83,7 +86,7 @@
       <div class="card-h">
         <h2>Паттерн</h2><span class="sub">1 такт · 16 шагов</span>
         <span class="spacer"></span><span id="genreTag" class="tag" hidden></span>
-        <div id="bankSeg" class="seg bank" title="Рисунки для «переключения передач» в треке" hidden><button data-b="0" class="on">A</button><button data-b="1">B</button><button data-b="2">C</button></div>
+        <div id="bankSeg" class="seg bank" title="Какой рисунок играет: A, B или C — «переключение передач». «Авто» — как решила аранжировка" hidden><button data-b="auto" class="on">Авто</button><button data-b="0">A</button><button data-b="1">B</button><button data-b="2">C</button></div>
       </div>
       <div class="harm-row">
         <button id="harmBtn" class="harm" title="Бас, аккорды и мелодия идут по кругу аккордов"><span class="hl">Гармония</span><span id="harmChords" class="hc"></span><small id="harmPer"></small><svg><use href="#i-down"/></svg></button>
@@ -108,7 +111,7 @@
       </div>
     </section>
 
-    <section class="card song">
+    <section class="card song" id="songCard">
       <div class="card-h">
         <h2>Трек</h2><span id="songSub" class="sub"></span>
         <span class="spacer"></span>
@@ -117,13 +120,21 @@
       <div class="song-tools">
         <div id="lenSeg" class="pill lenp" title="Длина трека"><button data-d="-1" aria-label="Короче">−</button><b id="lenVal">3 мин</b><button data-d="1" aria-label="Длиннее">+</button></div>
         <button id="writeBtn" class="btn lime"><svg><use href="#i-spark"/></svg><span>Сочинить трек</span></button>
-        <button id="rerollBtn" class="btn" hidden title="Тот же паттерн — новая аранжировка"><svg><use href="#i-dice"/></svg><span>Другой вариант</span></button>
+        <div class="flip"><button id="prevBtn" class="btn" hidden title="Предыдущий трек" aria-label="Предыдущий трек"><svg><use href="#i-back"/></svg></button><span id="histPos" class="hpos" hidden></span>
+        <button id="rerollBtn" class="btn" hidden title="Следующий трек: новый вариант того же жанра — свои партии, звуки, голос и аранжировка. Не понравился — листай дальше"><span>Следующий трек</span><svg><use href="#i-fwd"/></svg></button></div>
         <button id="heroBtn" class="btn" hidden title="Инструмент, который разгорается через весь трек"><svg><use href="#i-bolt"/></svg><span>Герой</span></button>
         <button id="renderBtn" class="btn" hidden><svg><use href="#i-save"/></svg><span>Сохранить WAV</span></button>
       </div>
       <div id="songEmpty" class="empty-hint">Нажми <b>«Сочинить трек»</b> или скажи <b>«напиши трек на 3 минуты»</b>. Я разложу паттерн на интро, набор, брейк, подъём, дроп и аутро по сценарию жанра. Потом всё можно поправить: длину частей, переходы, гармонию и кто где играет.</div>
+      <div id="seekRow" class="seekrow" hidden>
+        <button class="sk" data-sk="start" title="В начало трека" aria-label="В начало трека"><svg><use href="#i-first"/></svg></button>
+        <button class="sk" data-sk="-8" title="Назад на 8 тактов (←)" aria-label="Назад на 8 тактов"><svg><use href="#i-back"/></svg></button>
+        <div id="scrub" class="scrub" role="slider" tabindex="0" aria-label="Перемотка трека"><div class="sbar"><i class="sfill"></i></div><b class="sknob"></b></div>
+        <button class="sk" data-sk="8" title="Вперёд на 8 тактов (→)" aria-label="Вперёд на 8 тактов"><svg><use href="#i-fwd"/></svg></button>
+        <span id="seekTime" class="stime">0:00 / 0:00</span>
+      </div>
       <div class="song-wrap"><div id="songTl" class="song-tl" hidden></div></div>
-      <div class="seq-foot">Каждый вариант — свой номер: «Другой вариант» сочиняет новую аранжировку того же паттерна. Нажми на часть — длина, приёмы на стыках, начало, фильтр, гармония, «пересочинить часть». Клетка — включить или выключить инструмент, <b>удержание</b> — громкость, рисунок A/B/C и с какого места вступает. Сверху — график энергии.</div>
+      <div class="seq-foot">Каждый вариант — свой номер: «Следующий трек» — новый вариант: свои бочка, бас, хэты, аккорды, голос и звуки (напетое и поправленное руками остаётся); «‹» — вернуться к прошлому, на телефоне можно смахнуть карточку. Нажми на часть — длина, приёмы на стыках, начало, фильтр, гармония, «пересочинить часть». Клетка — включить или выключить инструмент, <b>удержание</b> — громкость, рисунок A/B/C и с какого места вступает. Сверху — график энергии: нажми или протяни по нему, чтобы перемотать.</div>
     </section>
 
     <div class="duo">
@@ -180,6 +191,6 @@
 </dialog>
 
 <div id="toasts" class="toasts"></div>
-<script type="module" src="js/app.js?v=4"></script>
+<script type="module" src="js/app.js?v=5"></script>
 </body>
 </html>

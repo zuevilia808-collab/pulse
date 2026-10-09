@@ -73,12 +73,31 @@ export const SOUNDS = {
     lbell: { name: 'Колокол', desc: 'стеклянный звон', p: { wave: 'sine', cutoff: 8000, res: 0.7, decay: 0.8, attack: 0.003, det: 0, fm: 3, fmr: 3.5, vib: 0, rel: 0.5, gain: 1.4 } },
     lghost: { name: 'Призрак', desc: 'плывущий, для витч-хауса', v: 'slow', p: { wave: 'triangle', cutoff: 2500, res: 1, decay: 0.6, attack: 0.06, det: 20, fm: 0, fmr: 2, vib: 18, rel: 0.3, gain: 1.5 } },
   },
+  // Голос: обработка адлибов. pitch — полутоны, hp/lp — фильтры, ring — робот, back — задом наперёд,
+  // stut — сколько раз заикается начало, gate — рубится шестнадцатыми; rev/dly — посылы на реверб и эхо.
+  vox: {
+    vclean: { name: 'Чистый', desc: 'как есть, чуть воздуха', p: { pitch: 0, hp: 140, lp: 14000, rev: 0.16, dly: 0.1 } },
+    vtel: { name: 'Телефон', desc: 'узкая полоса, как из трубки', p: { pitch: 0, hp: 500, lp: 3200, q: 1.2, drive: 0.35, rev: 0.1, dly: 0.25 } },
+    vradio: { name: 'Рация', desc: 'хрип и перегруз', p: { pitch: 0, hp: 900, lp: 2400, q: 2, drive: 0.75, rev: 0.05, dly: 0.3 } },
+    vdeep: { name: 'Низкий', desc: 'на кварту ниже, басовитый', p: { pitch: -5, hp: 60, lp: 9000, rev: 0.22, dly: 0.1 } },
+    vchip: { name: 'Высокий', desc: 'ускоренный, звонкий', p: { pitch: 6, hp: 200, lp: 15000, rev: 0.14, dly: 0.2 } },
+    vrobot: { name: 'Робот', desc: 'металлический, как из машины', p: { pitch: 0, hp: 150, lp: 8000, ring: 70, drive: 0.2, rev: 0.15, dly: 0.15 } },
+    vback: { name: 'Реверс', desc: 'задом наперёд, засасывает', p: { pitch: 0, hp: 160, lp: 12000, back: 1, rev: 0.35, dly: 0.1 } },
+    vstut: { name: 'Заикание', desc: 'начало повторяется: ле-ле-лец гоу', p: { pitch: 0, hp: 140, lp: 14000, stut: 3, rev: 0.15, dly: 0.1 } },
+    vgate: { name: 'Гейт', desc: 'рубится шестнадцатыми', p: { pitch: 0, hp: 150, lp: 13000, gate: 1, rev: 0.2, dly: 0.2 } },
+    vdub: { name: 'Даб', desc: 'тонет в эхе', p: { pitch: 0, hp: 300, lp: 6000, rev: 0.3, dly: 0.7 } },
+    vspace: { name: 'Космос', desc: 'огромный реверб, чуть ниже', p: { pitch: -2, hp: 200, lp: 11000, rev: 0.85, dly: 0.35 } },
+    vcrush: { name: 'Кранч', desc: 'грязный перегруз', p: { pitch: 0, hp: 250, lp: 5000, q: 1.5, drive: 0.95, rev: 0.1, dly: 0.1 } },
+  },
 };
+// Обработка голоса в каждом наборе
+const KIT_VOX = { techno: 'vclean', acid: 'vtel', k808: 'vclean', minimal: 'vdub', dub: 'vdub', detroit: 'vradio', hypnotic: 'vspace', melodic: 'vspace', industrial: 'vcrush', hard: 'vcrush', witch: 'vdeep', house: 'vclean' };
 
 const kit = (name, desc, list) => ({ name, desc, s: Object.fromEntries(IDS.map((id, i) => [id, list[i]])) });
+const withVox = kits => { for (const k in kits) kits[k].s.vox = KIT_VOX[k]; return kits; };
 
 // Порядок звуков в наборе: бочка, клэп, хэт, открытый хэт, перкуссия, бас, аккорды, мелодия.
-export const KITS = {
+export const KITS = withVox({
   techno: kit('Техно 909', 'классика пик-тайма', ['k909', 'c909', 'h909', 'o909', 'ptom', 'broll', 'sdub', 'lsaw']),
   acid: kit('Эсид 303', 'кислотный бас и 909', ['k909', 'c909', 'h909', 'o909', 'pblip', 'b303', 'spluck', 'lsquare']),
   k808: kit('Классика 808', 'мягкие удары и ковбелл', ['k808', 'c808', 'h808', 'o808', 'pcow', 'b808', 'sorgan', 'lsquare']),
@@ -91,7 +110,7 @@ export const KITS = {
   hard: kit('Хард', 'перегруз и рейв', ['khard', 'c909', 'hmetal', 'o909', 'pmetal', 'breese', 'srave', 'lsaw']),
   witch: kit('Witch House', '808, хор и призраки', ['kboom', 'ctrap', 'htrap', 'o808', 'pchime', 'b808', 'schoir', 'lghost']),
   house: kit('Хаус', 'клавиши, шейкер, конги', ['khouse', 'c909', 'hshaker', 'o909', 'pconga', 'bhouse', 'skeys', 'lbell']),
-};
+});
 export const KIT_IDS = Object.keys(KITS);
 
 // Какой набор сейчас собран (или null, если звуки выбраны вручную).
@@ -114,5 +133,6 @@ export const SOUND_WORDS = {
   perc: [['pcow', 'ковбел|808'], ['ptom', 'том|бонг'], ['pconga', 'конг'], ['pblip', 'блип|писк'], ['pmetal', 'металл|лязг'], ['pchime', 'колокольч|звон']],
   bass: [['b808', '808'], ['b303q', '303 квадрат|квадратн\\S* 303'], ['b303', '303|кислот|есид|асид'], ['bsub', 'саб|sub'], ['bsquare', 'квадрат'], ['breese', 'риз|reese|рычащ'], ['broll', 'роллинг|катящ'], ['bhouse', 'хаус|house']],
   stab: [['skeys', 'пиано|пианин|рояль|родес|rhodes|piano|хаус|house'], ['spad', 'пед|пэд|pad|мрачн'], ['schoir', 'хор|голос'], ['sorgan', 'орган'], ['spluck', 'плак|щипок|pluck'], ['srave', 'рейв|rave'], ['sdub', 'даб|dub']],
+  vox: [['vtel', 'телефон|трубк'], ['vradio', 'раци|радио|хрип'], ['vdeep', 'низк|басовит|толст'], ['vchip', 'высок|пискляв|бурундук|ускор'], ['vrobot', 'робот|машин|металл'], ['vback', 'реверс|задом|наоборот'], ['vstut', 'заика|статтер|stutter'], ['vgate', 'гейт|gate|рубл'], ['vdub', 'даб|dub|ех[оа]'], ['vspace', 'космос|косми|реверб|далек'], ['vcrush', 'кранч|грязн|перегруж'], ['vclean', 'чист|обычн|без обработ']],
   lead: [['lbell', 'колокол|bell'], ['lghost', 'призрак|ghost|вич|витч'], ['lsine', 'синус|sine'], ['lsquare', 'квадрат'], ['lpluck', 'плак|щипок|pluck'], ['lsaw', 'пил[аы]|saw']],
 };

@@ -2,3 +2,7 @@ node_modules/
 *.wav
 .DS_Store
 Thumbs.db
+vox/qa.json
+vox/bad.json
+tools/voice_refs/
+local/

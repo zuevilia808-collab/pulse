@@ -3,23 +3,25 @@ import {
   TRACKS, TRACK, emptyState, fixState, keyLabel, noteName, isEmpty, makePattern, denser, sparser, genreState,
   GENRES, GENRE_IDS, defaultVariant, VARIANT_RU, VARIANTS, emptySteps, NOTE_RU, SCALE_RU, snap, covered, semiToDeg, deg, pick, soundParams,
   PROGS, GENRE_PROGS, progChords, harmShift, harmIndex,
-} from './music.js?v=4';
-import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=4';
-import { PART, INS, OUTS, FILTERS, HEADS, SHAPES, FORMS, LANES, compose, rerollSection, makePerf, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=4';
-import { Engine, renderSong } from './engine.js?v=4';
-import { parse, normalize, QUICK } from './commands.js?v=4';
-import { Voice } from './voice.js?v=4';
-import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=4';
-import { Viz } from './viz.js?v=4';
+} from './music.js?v=5';
+import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=5';
+import { PART, INS, OUTS, FILTERS, HEADS, SHAPES, FORMS, LANES, loopSteps, compose, rerollSection, makePerf, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=5';
+import { Engine, renderSong } from './engine.js?v=5';
+import { parse, normalize, QUICK } from './commands.js?v=5';
+import { Voice } from './voice.js?v=5';
+import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=5';
+import { Viz } from './viz.js?v=5';
+import { FL, flInit, flCandidates, flSound, FL_TRACKS } from './fl.js?v=5';
+import { voxAddFl, VOX, STYLES, LANGS, SEXES, EVERY, voxInit, voxFetch, voxIdsOf, voxPattern, voxLabel, voxInfo, voxFilter, voxSearch, voxShuffle, planSongVox } from './vox.js?v=5';
 
 const STORE = 'pulse.state.v1';
 const $ = s => document.querySelector(s);
-const NAME = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Открытый хэт', perc: 'Перкуссия', bass: 'Бас', stab: 'Аккорды', lead: 'Мелодия', rumble: 'Румбл' };
-const ACC = { kick: 'бочку', clap: 'клэп', hat: 'хэт', ohat: 'открытый хэт', perc: 'перкуссию', bass: 'бас', stab: 'аккорды', lead: 'мелодию', rumble: 'румбл' };
-const OTHER = { kick: 'другую бочку', clap: 'другой клэп', hat: 'другой хэт', ohat: 'другой открытый хэт', perc: 'другую перкуссию', bass: 'другой бас', stab: 'другие аккорды', lead: 'другой синт' };
-const NEWPAT = { kick: 'новый ритм бочки', clap: 'новый ритм клэпа', hat: 'новый ритм хэтов', ohat: 'новый ритм открытого хэта', perc: 'новую перкуссию', bass: 'новый бас', stab: 'новые аккорды', lead: 'новую мелодию' };
+const NAME = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Открытый хэт', perc: 'Перкуссия', bass: 'Бас', stab: 'Аккорды', lead: 'Мелодия', vox: 'Голос', rumble: 'Румбл' };
+const ACC = { kick: 'бочку', clap: 'клэп', hat: 'хэт', ohat: 'открытый хэт', perc: 'перкуссию', bass: 'бас', stab: 'аккорды', lead: 'мелодию', vox: 'голос', rumble: 'румбл' };
+const OTHER = { kick: 'другую бочку', clap: 'другой клэп', hat: 'другой хэт', ohat: 'другой открытый хэт', perc: 'другую перкуссию', bass: 'другой бас', stab: 'другие аккорды', lead: 'другой синт', vox: 'другой голос' };
+const NEWPAT = { kick: 'новый ритм бочки', clap: 'новый ритм клэпа', hat: 'новый ритм хэтов', ohat: 'новый ритм открытого хэта', perc: 'новую перкуссию', bass: 'новый бас', stab: 'новые аккорды', lead: 'новую мелодию', vox: 'другие адлибы' };
 const DECAY = { kick: [0.15, 1.8], clap: [0.04, 0.8], hat: [0.02, 0.2], ohat: [0.1, 1.2], perc: [0.04, 0.8], bass: [0.05, 0.8], stab: [0.05, 1.6], lead: [0.08, 1.2] };
-const SHORT = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Откр. хэт', perc: 'Перк.', bass: 'Бас', stab: 'Аккорды', lead: 'Мелодия' };
+const SHORT = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Откр. хэт', perc: 'Перк.', bass: 'Бас', stab: 'Аккорды', lead: 'Мелодия', vox: 'Голос' };
 const LENS = [1, 1.5, 2, 3, 4, 5];
 const MOBILE = navigator.userAgentData?.mobile ?? (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1));
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -32,6 +34,13 @@ const fmtTime = sec => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).p
 const fmtMin = m => `${String(m).replace('.', ',')} мин`;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
+// Звуки FL Studio (только на компьютере): каталог нужен до чтения сохранённого состояния —
+// иначе дорожки со звуками FL потеряли бы свой звук
+await flInit();
+try {
+  const raw = JSON.parse(localStorage.getItem(STORE) || 'null');
+  if (raw && raw.tracks) for (const [id, t] of Object.entries(raw.tracks)) if (t && String(t.sound).startsWith('fl:')) flSound(id, t.sound);
+} catch { /* нет хранилища */ }
 let state = load();
 const undoStack = [];
 const engine = new Engine(() => state);
@@ -56,6 +65,7 @@ let saveTimer;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* память браузера недоступна */ } }, 300);
+  if (VOX.ready) voxFetch(voxIdsOf(state)); // фразы голоса — заранее, чтобы прозвучали вовремя
 }
 function pushUndo() {
   undoStack.push(JSON.stringify(state));
@@ -105,6 +115,17 @@ const tl = ids => {
 
 function setPattern(id, variant) {
   const tr = state.tracks[id];
+  delete tr.hand;
+  if (id === 'vox') {
+    // Голос: новые фразы в стиле, один диктор; фразы меняются по кругу из набора pool
+    const r = voxPattern(STYLES[variant] ? variant : defaultVariant('vox', state.genre), tr.vox, state.bpm, state.genre);
+    tr.steps = r.steps;
+    Object.assign(tr.vox, { pool: r.pool, every: r.every, last: r.voice });
+    tr.variant = STYLES[variant] ? variant : defaultVariant('vox', state.genre);
+    songVox();
+    voxFetch(voxIdsOf(state));
+    return;
+  }
   tr.steps = makePattern(id, variant, state.scale);
   tr.variant = variant;
 }
@@ -117,7 +138,28 @@ function setSound(id, sid) {
 
 function applyKit(kid) {
   for (const id of LANES) setSound(id, KITS[kid].s[id]);
+  setSound('vox', KITS[kid].s.vox);
 }
+
+// Фразы, из которых дорожка «Голос» берёт новые адлибы (если набора ещё нет — подбираем).
+function voxPoolFor() {
+  const o = state.tracks.vox.vox;
+  if (!o.pool || !o.pool.length) {
+    const r = voxPattern(defaultVariant('vox', state.genre), o, state.bpm, state.genre);
+    Object.assign(o, { pool: r.pool, last: r.voice });
+  }
+  return o.pool.length ? o.pool : ['-'];
+}
+// Адлибы в сочинённом треке — заново по всему треку (тем же диктором, что и в петле).
+function songVox(only = null) {
+  const song = state.song;
+  if (!song || !VOX.ready) return 0;
+  const o = state.tracks.vox.vox, voice = o.voice || o.last || (song.vox && song.vox.voice);
+  const r = planSongVox(song.sections, song.genre, { ...o, voice }, state.bpm, only);
+  if (r) song.vox = { voice: r.voice };
+  return song.sections.reduce((a, x) => a + (x.vox ? x.vox.length : 0), 0);
+}
+const voiceName = v => (VOX.voices[v] ? VOX.voices[v][0] : v || '');
 
 function ensureTrack(id) {
   const tr = state.tracks[id];
@@ -130,7 +172,8 @@ function ensureTrack(id) {
 
 function stepsFrom(id, idx) {
   const s = emptySteps(id);
-  for (const i of idx) s[i] = TRACK[id].kind === 'drum' ? (i % 4 === 0 ? 1 : 0.85) : { n: 0, len: 1 };
+  const pool = id === 'vox' ? voxPoolFor() : [];
+  for (const [k, i] of idx.entries()) s[i] = TRACK[id].kind === 'drum' ? (i % 4 === 0 ? 1 : 0.85) : id === 'vox' ? { a: pool[k % pool.length] } : { n: 0, len: 1 };
   return s;
 }
 
@@ -154,19 +197,124 @@ function startSongAt(bar) {
   else { engine.songPos = bar; engine.seekTo = null; play(); }
 }
 
+// ——— Перемотка трека ———
+let scrubBar = null, lastScrubTxt = ''; // scrubBar — куда сейчас тянут ползунок (в тактах)
+// Где трек сейчас, в тактах (с долями): тянут ползунок → ждёт перемотки → играет → стоит на паузе
+function songPosBar() {
+  if (scrubBar != null) return scrubBar;
+  if (engine.playing && engine.seekTo != null) return engine.seekTo;
+  if (engine.playing && songAt >= 0 && state.mode === 'song') return songAt + Math.max(0, playhead) / 16;
+  return engine.songPos || 0;
+}
+// Перейти к такту: если играет — с начала следующего такта, если стоит — отсюда начнётся. go — сразу играть.
+function seekSong(bar, go = false) {
+  const song = state.song, total = songBars(song);
+  bar = clamp(Math.floor(bar), 0, total - 1);
+  if (engine.playing || go) startSongAt(bar);
+  else { state.mode = 'song'; engine.setMode('song'); engine.songPos = bar; engine.seekTo = null; }
+  save();
+  renderSongCard();
+  const L = locate(song, bar);
+  return `${fmtTime(bar * barSec(state.bpm))} — ${PART[L.s.type].name}${L.j ? `, такт ${L.j + 1} из ${L.s.bars}` : ''}`;
+}
+function updateScrub() {
+  const song = state.song, row = $('#seekRow');
+  if (row.hidden !== !song) row.hidden = !song;
+  if (!song) return;
+  const total = songBars(song), pos = clamp(songPosBar(), 0, total), bs = barSec(state.bpm), sc = $('#scrub');
+  sc.style.setProperty('--p', ((pos / total) * 100).toFixed(2) + '%');
+  const txt = `<b>${fmtTime(pos * bs)}</b> / ${fmtTime(total * bs)}`;
+  if (txt !== lastScrubTxt) {
+    lastScrubTxt = txt;
+    $('#seekTime').innerHTML = txt;
+    sc.setAttribute('aria-valuetext', fmtTime(pos * bs));
+  }
+}
+// Такт под точкой графика энергии: части разной ширины, поэтому считаем по самой части
+function barAtTl(x) {
+  const secs = [...document.querySelectorAll('#songTl .sec')], song = state.song;
+  for (let i = 0; i < secs.length; i++) {
+    const r = secs[i].getBoundingClientRect();
+    if (x < r.right + 1.5 || i === secs.length - 1) return sectionStart(song, i) + clamp((x - r.left) / r.width, 0, 0.999) * song.sections[i].bars;
+  }
+  return 0;
+}
+// Протянуть пальцем или мышью: el — за что тянут, at(x) — такт под пальцем
+function bindScrub(el, at, filter = () => true) {
+  let id = null;
+  el.addEventListener('pointerdown', e => {
+    if (!state.song || e.button > 0 || !filter(e)) return;
+    e.preventDefault();
+    id = e.pointerId;
+    el.setPointerCapture(id);
+    $('#scrub').classList.add('drag');
+    scrubBar = at(e.clientX);
+  });
+  el.addEventListener('pointermove', e => { if (e.pointerId === id) scrubBar = at(e.clientX); });
+  const end = (e, ok) => {
+    if (e.pointerId !== id) return;
+    id = null;
+    $('#scrub').classList.remove('drag');
+    const b = scrubBar;
+    scrubBar = null;
+    if (ok && b != null) ensureAudio().then(() => setDid('Перемотка: ' + seekSong(b)));
+  };
+  el.addEventListener('pointerup', e => end(e, true));
+  el.addEventListener('pointercancel', e => end(e, false));
+}
+
+// ——— История треков: листать варианты вперёд и назад, как ленту ———
+const HIST_KEYS = ['bpm', 'swing', 'key', 'scale', 'genre', 'tracks', 'song', 'harm', 'master', 'songMin', 'bank'];
+const hist = [];
+let histAt = -1;
+const snapState = () => structuredClone(Object.fromEntries(HIST_KEYS.map(k => [k, state[k]])));
+function histKeep() { if (histAt >= 0 && state.song) hist[histAt] = snapState(); } // правки текущего трека не теряются
+function histAdd() {
+  hist.push(snapState());
+  if (hist.length > 30) hist.shift();
+  histAt = hist.length - 1;
+}
+function histGo(i) {
+  if (i < 0 || i >= hist.length) return null;
+  histKeep();
+  state = fixState({ ...state, ...structuredClone(hist[i]), mode: 'song' });
+  histAt = i;
+  engine.setMode('song');
+  breakSet = null;
+  engine.applyParams();
+  startSongAt(0);
+  if (VOX.ready) voxFetch(voxIdsOf(state));
+  const s = state.song;
+  return `Трек ${i + 1} из ${hist.length} · ${GENRES[state.genre] ? GENRES[state.genre].name + ' · ' : ''}вариант №${s.seed} · ${fmtTime(songBars(s) * barSec(state.bpm))}`;
+}
+// Следующий: вперёд по истории, а в её конце — новый вариант
+function nextTrack() {
+  if (histAt < hist.length - 1) return histGo(histAt + 1);
+  return composeSong(state.songMin, null, !!state.song);
+}
+function prevTrack() {
+  if (histAt <= 0) return 'Это первый трек в истории — листай вперёд: «следующий трек»';
+  return histGo(histAt - 1);
+}
+
 // Сочинить трек. Номер варианта (seed) определяет всё: с тем же номером получится тот же трек.
-function composeSong(minutes, seed) {
+function composeSong(minutes, seed, fresh = false) {
+  // Текущий трек остаётся в истории — к нему можно вернуться кнопкой «‹»
+  if (state.song) { if (histAt < 0) histAdd(); else histKeep(); }
   const min = clamp(minutes || state.songMin || 3, 1, 5);
   state.songMin = min;
   if (isAllEmpty()) state = genreState(state, state.genre || 'peak');
   const sd = seed || 1 + Math.floor(Math.random() * 99999);
-  state.song = compose(state, min, state.genre, sd);
+  // Первый трек строится из того, что звучит в петле; «другой вариант» и «вариант N» — со своими партиями и звуками
+  state.song = compose(state, min, state.genre, sd, fresh);
   for (const t of TRACKS) { state.tracks[t.id].mute = false; state.tracks[t.id].solo = false; }
   breakSet = null;
   bank = 0;
+  state.bank = null;
+  histAdd();
   startSongAt(0);
   const song = state.song, path = song.sections.map(x => PART[x.type].name.toLowerCase()).filter((x, i, a) => x !== a[i - 1]);
-  return `Вариант №${sd} · форма «${FORMS[song.form].name}» · ${fmtTime(songBars(song) * barSec(state.bpm))}: ${path.join(' → ')}`;
+  return `Трек ${histAt + 1} из ${hist.length} · вариант №${sd} · форма «${FORMS[song.form].name}» · ${fmtTime(songBars(song) * barSec(state.bpm))}: ${path.join(' → ')}`;
 }
 
 // ——— Гармония: бас, аккорды и мелодия идут по кругу аккордов ———
@@ -225,8 +373,10 @@ async function saveSongWav() {
   if (!state.song) return 'Сначала сочини трек — скажи «напиши трек на 3 минуты»';
   rendering = true;
   const snap = structuredClone(state), bars = songBars(snap.song), btn = $('#renderBtn'), lbl = btn.querySelector('span');
+  snap.bank = null; // в файл трек идёт так, как его разложила аранжировка
   btn.disabled = true;
   try {
+    if (VOX.ready) await voxFetch(voxIdsOf(snap));
     const res = await renderSong(snap, k => barData(snap, k), bars, p => { lbl.textContent = `Сохраняю… ${Math.round(p * 100)}%`; });
     const name = download(res.blob, 'pulse-track');
     toast(`Сохранил ${name} в «Загрузки»`, 'ok');
@@ -275,9 +425,42 @@ async function exec(a) {
       const g = GENRES[id];
       at('bar', () => { state = genreState(state, id); breakSet = null; });
       play();
-      return `${g.name} · ${g.bpm} BPM${g.feel ? ` (${g.feel})` : ''} · звуки «${KITS[g.kit].name}»`;
+      return `${g.name} · ${g.bpm} BPM${g.feel ? ` (${g.feel})` : ''} · каждый раз свой бит: рисунки и звуки из жанра`;
     }
-    case 'song': return composeSong(a.minutes, a.reroll ? null : a.seed);
+    case 'nextTrack': return nextTrack();
+    case 'prevTrack': return prevTrack();
+    case 'song': return composeSong(a.minutes, a.reroll ? null : a.seed, !!(a.reroll || a.seed));
+    case 'voxVoice': case 'voxLang': case 'voxSay': {
+      if (!VOX.ready) return 'Голоса ещё загружаются — попробуй через пару секунд';
+      const tr = T.vox, o = tr.vox;
+      if (a.type === 'voxLang') o.lang = a.lang;
+      if (a.type === 'voxVoice') {
+        if (a.sex) { o.sex = a.sex; o.voice = null; }
+        else {
+          // Другой диктор того же пола (или любого)
+          const vs = Object.keys(VOX.voices).filter(v => v !== (o.voice || o.last) && (o.sex === 'any' || VOX.voices[v][1] === o.sex));
+          o.voice = pick(vs);
+        }
+      }
+      if (a.type === 'voxSay') {
+        const found = voxSearch(a.q, { voice: o.voice || o.last })[0] || voxSearch(a.q)[0];
+        if (!found) return `Не нашёл фразу «${a.q}» — нажми и подержи клетку голоса и выбери из списка`;
+        if (isEmpty(tr)) setPattern('vox', tr.variant || defaultVariant('vox', state.genre));
+        tr.steps[0] = { a: found.id };
+        o.pool = [found.id, ...(o.pool || []).filter(x => x !== found.id)].slice(0, 8);
+        o.swap = false;
+        tr.mute = false;
+        voxFetch([found.id]).then(() => engine.preview('vox', found.id));
+        play();
+        return `Голос: «${found.text}» (${voiceName(found.voice)})`;
+      }
+      setPattern('vox', tr.variant || defaultVariant('vox', state.genre));
+      tr.mute = false;
+      play();
+      const c = voxInfo((tr.steps.find(Boolean) || {}).a);
+      if (!engine.playing) setTimeout(() => engine.preview('vox'), 30);
+      return `Голос: ${voiceName(o.voice || o.last)}${a.type === 'voxLang' ? ', ' + LANGS[o.lang].toLowerCase() : ''}${c ? ` — «${c.text}»` : ''}`;
+    }
     case 'harm': {
       const h = state.harm;
       if (a.prog === 'none') { h.prog = 'none'; h.auto = false; return harmSay(); }
@@ -292,10 +475,13 @@ async function exec(a) {
       return harmSay() + (song ? ' · станет главной в следующем сочинении трека' : '');
     }
     case 'mode': return setMode(a.mode);
-    case 'seek':
+    case 'seek': {
       if (!state.song) return 'Трек ещё не сочинён — скажи «напиши трек»';
-      startSongAt(a.bar || 0);
-      return 'Играю трек с начала';
+      if (a.types) return jumpTo(a.types) || `В этом треке нет части «${PART[a.types[0]].name}»`;
+      const bs = barSec(state.bpm), total = songBars(state.song), cur = Math.floor(songPosBar());
+      const bar = a.bar != null ? a.bar : a.end ? total - 8 : a.sec != null ? a.sec / bs : a.dsec != null ? cur + a.dsec / bs : cur + (a.delta || 0);
+      return 'Перемотка: ' + seekSong(bar, true);
+    }
     case 'kit':
       applyKit(a.id);
       if (!engine.playing) setTimeout(() => engine.preview('kick'), 30);
@@ -394,6 +580,10 @@ async function exec(a) {
       if (tgt === 'kick') return 'У бочки нет фильтра — скажи «бочка мягче» или «бочка жёстче»';
       ensureTrack(tgt);
       const p = T[tgt].p;
+      if (tgt === 'vox') {
+        p.lp = clamp((p.lp || 14000) * (a.dir > 0 ? 1.8 : 1 / 1.8), 700, 16000);
+        return `Голос ${a.dir > 0 ? 'ярче' : 'глуше'}: ${hz(p.lp)}`;
+      }
       if ('cutoff' in p) {
         p.cutoff = clamp(p.cutoff * (a.dir > 0 ? 1.7 : 1 / 1.7), 60, 9000);
         return `Фильтр «${NAME[tgt]}»: ${hz(p.cutoff)}`;
@@ -421,7 +611,7 @@ async function exec(a) {
     case 'decay': {
       const out = [];
       for (const id of tl(a.tracks)) {
-        if (!T[id]) continue;
+        if (!T[id] || id === 'vox') continue;
         ensureTrack(id);
         const p = T[id].p;
         p.decay = clamp(p.decay * (a.dir > 0 ? 1.45 : 1 / 1.45), ...DECAY[id]);
@@ -435,7 +625,11 @@ async function exec(a) {
         if (!T[id]) continue;
         ensureTrack(id);
         const tr = T[id];
-        if (TRACK[id].kind === 'drum') {
+        if (id === 'vox') {
+          const d = a.delta != null ? clamp(a.delta, -12, 12) : 3 * a.dir;
+          tr.p.pitch = clamp((tr.p.pitch || 0) + d, -12, 12);
+          out.push(`Голос ${d > 0 ? 'выше' : 'ниже'}: ${tr.p.pitch > 0 ? '+' : ''}${tr.p.pitch} пт.`);
+        } else if (TRACK[id].kind === 'drum') {
           const semis = a.delta != null ? a.delta : 2 * a.dir;
           if ('tune' in tr.p) tr.p.tune = clamp(tr.p.tune * 2 ** (semis / 12), id === 'kick' ? 30 : 150, id === 'kick' ? 90 : 2000);
           else tr.p.tone = clamp(tr.p.tone * 2 ** (semis / 12), 2000, 14000);
@@ -526,6 +720,14 @@ async function exec(a) {
           if (a.dir < 0) { out.push(`${NAME[id]} и так молчит`); continue; }
           ensureTrack(id);
           out.push(`${NAME[id]} добавлен`);
+          continue;
+        }
+        if (id === 'vox') {
+          const o = T.vox.vox, L = [1, 2, 4, 8], k = L.indexOf(o.every);
+          o.every = L[clamp((k < 0 ? 2 : k) - a.dir, 0, 3)];
+          T.vox.mute = false;
+          const nv = songVox();
+          out.push(`Голос ${EVERY[o.every]}${state.song ? ` · в треке адлибов: ${nv}` : ''}`);
           continue;
         }
         T[id].steps = a.dir > 0 ? denser(id, T[id].steps) : sparser(id, T[id].steps);
@@ -813,7 +1015,7 @@ const KNOBS = [
   { label: 'Общий фильтр', short: 'Фильтр<br>всего', get: () => state.master.cut, set: v => { state.master.cut = v; }, min: 250, max: 20000, log: true, fmt: v => (v >= 19500 ? 'открыт' : hz(v)), short_fmt: v => (v >= 19500 ? 'откр' : hzS(v)) },
   { label: 'Общая громкость', short: 'Мастер', get: () => state.master.vol, set: v => { state.master.vol = v; }, min: -30, max: 6, fmt: dbs, short_fmt: dbS },
 ];
-const FADER_NAME = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Откр.<br>хэт', perc: 'Перк.', bass: 'Бас', stab: 'Аккор&shy;ды', lead: 'Мело&shy;дия' };
+const FADER_NAME = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Откр.<br>хэт', perc: 'Перк.', bass: 'Бас', stab: 'Аккор&shy;ды', lead: 'Мело&shy;дия', vox: 'Голос' };
 const CH_FADERS = TRACKS.map(t => ({
   label: `Громкость: ${NAME[t.id].toLowerCase()}`, short: FADER_NAME[t.id], color: t.color,
   get: () => state.tracks[t.id].p.vol, set: v => { state.tracks[t.id].p.vol = Math.round(v); }, min: -30, max: 8, fmt: dbs, short_fmt: dbS,
@@ -841,16 +1043,19 @@ const EXAMPLES = [
   'напою бас', 'битбокс', 'добавь румбл', 'только бас', 'верни всё', 'сделай минимал', 'придумай мелодию', 'тональность ре минор',
   'сделай эсид', 'добавь перкуссию', 'хард-техно', 'играй весь трек', 'мрачные аккорды', 'хэты трэп', 'сочини мелодик-техно', 'другой вариант', 'сочини хард-техно',
   'сделай хаус', 'другая прогрессия', 'смена аккордов чаще', 'аккорды пиано', 'сочини хаус',
+  'добавь адлибы', 'добавь выкрики', 'другой голос', 'голос робот', 'адлибы по-русски', 'женский голос',
 ];
 
 const HELP = [
   ['Начать', ['сделай техно', 'сделай хаус', 'сделай эсид', 'сделай витч хаус', 'сделай минимал', 'сделай даб-техно', 'сделай индастриал', 'сделай гипнотик', 'хард-техно', 'детройт', 'поехали', 'стоп', 'новый трек']],
-  ['Трек целиком', ['напиши трек на 3 минуты', 'другой вариант', 'вариант 777', 'сочини витч хаус', 'сделай техно на 5 минут', 'трек на полторы минуты', 'играй весь трек', 'режим петли', 'с начала', 'брейк', 'дроп', 'сохрани']],
+  ['Трек целиком', ['напиши трек на 3 минуты', 'следующий трек', 'предыдущий трек', 'другой вариант', 'вариант 777', 'сочини витч хаус', 'сделай техно на 5 минут', 'трек на полторы минуты', 'играй весь трек', 'режим петли', 'с начала', 'брейк', 'дроп', 'сохрани']],
+  ['Перемотка', ['перемотай вперёд', 'перемотай назад', 'перемотай на 30 секунд вперёд', 'вперёд на 16 тактов', 'перемотай на 2 минуты', 'перемотай на минуту 1 30', 'перемотай к дропу', 'перемотай к брейку', 'в конец трека', 'с начала']],
   ['Звуки', ['другая бочка', 'другой клэп', 'другой хэт', 'другой открытый хэт', 'другая перкуссия', 'другой бас', 'другие аккорды', 'другой синт', 'бочка 808', 'клэп 909', 'бас 303', 'аккорды пиано', 'звук клэпа снейр', 'набор витч хаус', 'набор хаус', 'звуки 808', 'набор эсид', 'набор индастриал']],
   ['Инструменты и рисунки', ['добавь бочку', 'ломаная бочка', 'хэты на офбит', 'частые хэты', 'хэты трэп', 'клэп на 2 и 4', 'добавь открытый хэт', 'добавь перкуссию', 'кислотный бас', 'глубокий бас', 'бас 808', 'дабовые аккорды', 'мрачные аккорды', 'придумай мелодию', 'добавь румбл', 'новый бас', 'новый ритм хэтов', 'новые аккорды']],
   ['Убрать и соло', ['убери бочку', 'верни бочку', 'только бас', 'только бочка и бас', 'соло хэт тоже', 'верни всё', 'убери всё кроме бочки', 'очисти хэты', 'больше хэтов', 'проще бас']],
   ['Звук', ['темп 135', 'быстрее', 'громче бас', 'тише хэты', 'открой фильтр', 'закрой фильтр на всём', 'больше кислоты', 'бочка жёстче', 'бочку длиннее', 'больше эха на аккордах', 'больше реверба', 'сухо', 'добавь свинг', 'бас на октаву выше']],
   ['Тональность', ['тональность ре минор', 'в фа диез миноре', 'транспонируй на тон выше']],
+  ['Голос и адлибы', ['добавь адлибы', 'добавь выкрики', 'тёмные фразы', 'хаус-фразы', 'нарезка голоса', 'голос отсчёт', 'другие адлибы', 'другой голос', 'мужской голос', 'женский голос', 'адлибы по-русски', 'адлибы на английском', 'адлибы чаще', 'адлибы реже', 'голос робот', 'голос телефон', 'голос реверс', 'голос заикание', 'голос космос', 'голос ниже', 'скажи давай', 'скажи move your body', 'убери голос']],
   ['Гармония', ['другая прогрессия', 'добавь прогрессию', 'смена аккордов чаще', 'смена аккордов реже', 'без прогрессии']],
   ['Шоу', ['нарастание', 'брейк', 'дроп']],
   ['Голос вместо нот', ['напою бас', 'напою мелодию', 'напою аккорды', 'битбокс']],
@@ -930,9 +1135,15 @@ function renderTransport() {
 function renderGrid() {
   const anySolo = TRACKS.some(t => state.tracks[t.id].solo);
   const hasAlt = !!(state.song && state.song.alt);
-  if (!hasAlt) bank = 0;
+  if (!hasAlt) state.bank = null;
+  bank = state.bank || 0;
   $('#bankSeg').hidden = !hasAlt;
-  document.querySelectorAll('#bankSeg button').forEach(b => b.classList.toggle('on', +b.dataset.b === bank));
+  const songMode = state.mode === 'song';
+  document.querySelectorAll('#bankSeg button').forEach(b => {
+    const v = b.dataset.b === 'auto' ? null : +b.dataset.b;
+    if (b.dataset.b === 'auto') b.hidden = !songMode; // «Авто» есть только у трека: в петле всегда играет выбранный рисунок
+    b.classList.toggle('on', songMode ? v === state.bank : v === (state.bank || 0));
+  });
   for (const t of TRACKS) {
     const tr = state.tracks[t.id], r = rows[t.id], steps = stepsOf(t.id), L = steps.length;
     r.row.classList.toggle('muted', tr.mute || (anySolo && !tr.solo));
@@ -945,6 +1156,13 @@ function renderGrid() {
         const v = steps[i];
         c.className = 'cell' + (i >= L ? ' out' : '') + (v ? ' on' : '') + (v >= 1 ? ' acc' : '') + (v && v < 0.7 ? ' ghost' : '') + (i === playhead ? ' now' : '');
         c.textContent = '';
+      });
+    } else if (t.kind === 'vox') {
+      r.cells.forEach((c, i) => {
+        const x = steps[i], info = x && voxInfo(x.a);
+        c.className = 'cell vx' + (i >= L ? ' out' : '') + (x ? ' on' : '') + (x && x.fx ? ' acc' : '') + (i === playhead ? ' now' : '');
+        c.textContent = x ? voxLabel(x.a) : '';
+        c.title = info ? info.text : '';
       });
     } else {
       r.cells.forEach((c, i) => {
@@ -1063,11 +1281,16 @@ function renderSongCard() {
   $('#lenVal').textContent = fmtMin(state.songMin);
   $('#renderBtn').hidden = !song;
   $('#rerollBtn').hidden = !song;
+  $('#prevBtn').hidden = !song;
+  $('#prevBtn').disabled = histAt <= 0;
+  $('#histPos').hidden = !song || hist.length < 2;
+  $('#histPos').textContent = `${histAt + 1} / ${hist.length}`;
   $('#heroBtn').hidden = !song;
   if (song) $('#heroBtn span').textContent = `Герой: ${heroLabel(song.hero)}`;
   $('#songEmpty').hidden = !!song;
   box.hidden = !song;
   if (!song) {
+    updateScrub();
     $('#songSub').textContent = 'ещё не сочинён';
     box.innerHTML = '';
     return;
@@ -1093,8 +1316,16 @@ function renderSongCard() {
       h += `<button class="lc l${l}${emptyT ? ' empty' : ''}${l && en ? ' late' : ''}" data-i="${i}" data-id="${id}" style="--c:${t.color}${en ? `;--e:${en * 100}%` : ''}" aria-label="${NAME[id]}, ${PART[s.type].name}">${l && pi ? 'ABC'[pi] : ''}</button>`;
     });
   }
+  if (song.sections.some(x => x.vox)) {
+    h += `<span class="ln" style="--c:${TRACK.vox.color}">${SHORT.vox}</span>`;
+    song.sections.forEach(x => {
+      const words = x.vox ? [...new Set(x.vox.map(e => (voxInfo(e[2]) || {}).text).filter(Boolean))] : [];
+      h += `<span class="lc vxc l${x.vox ? 1 : 0}" style="--c:${TRACK.vox.color}" title="${esc(words.join(' · '))}">${x.vox ? x.vox.length : ''}</span>`;
+    });
+  }
   h += '<div class="sph" id="sph" hidden></div></div>';
   box.innerHTML = h;
+  updateScrub();
   requestAnimationFrame(drawEnergy);
   if (popState && popState.kind === 'sec') reopenSecPop();
 }
@@ -1123,14 +1354,19 @@ function markSectionRows() {
 }
 
 function moveSongHead() {
+  updateScrub();
   const ph = $('#sph');
   if (!ph) return;
-  if (!(state.mode === 'song' && state.song && engine.playing && songAt >= 0)) { ph.hidden = true; return; }
-  const L = locate(state.song, songAt);
+  const live = engine.playing && songAt >= 0 && scrubBar == null && engine.seekTo == null;
+  // Белая линия — где играет; лаймовая — откуда начнётся (пауза или перемотка)
+  const cue = scrubBar != null || (engine.playing ? engine.seekTo != null : engine.songPos > 0);
+  if (!(state.mode === 'song' && state.song && (live || cue))) { ph.hidden = true; return; }
+  const pos = songPosBar(), L = locate(state.song, Math.floor(pos));
   const el = L && document.querySelector(`#songTl .sec[data-i="${L.i}"]`);
   if (!el) { ph.hidden = true; return; }
   ph.hidden = false;
-  const frac = (L.j + Math.max(0, playhead) / 16) / L.s.bars;
+  ph.classList.toggle('cue', !live);
+  const frac = (L.j + (live ? Math.max(0, playhead) / 16 : pos - Math.floor(pos))) / L.s.bars;
   ph.style.transform = `translateX(${(el.offsetLeft + el.offsetWidth * frac).toFixed(1)}px)`;
 }
 
@@ -1218,6 +1454,7 @@ function noteAction(btn) {
   const { id, i } = popState, tr = state.tracks[id], a = btn.dataset.a, steps = stepsOf(id);
   if (a === 'close') { closePop(); return; }
   pushUndo();
+  tr.hand = true;
   let n = steps[i];
   const make = () => { if (!n) { n = steps[i] = { n: 0, len: 1 }; } return n; };
   if (a === 'note') {
@@ -1237,22 +1474,139 @@ function noteAction(btn) {
   if (popEl && popState && popState.kind === 'note') { popEl.innerHTML = noteHtml(id, i); }
 }
 
+// ——— Голос: окошко клетки — выбрать фразу из тысяч ———
+const VFX = ['vstut', 'vback', 'vtel', 'vrobot', 'vspace', 'vdub', 'vgate', 'vdeep', 'vchip'];
+function openVoxPop(cell, i) {
+  if (!VOX.ready) { toast('Голоса ещё загружаются'); return; }
+  const o = state.tracks.vox.vox;
+  openPop(cell, '', 'voxpop', { kind: 'vox', i, cell, cat: null, lang: o.lang, sex: o.sex, q: '', list: null });
+  fillVoxPop();
+  placePop(cell);
+  popEl.addEventListener('input', e => {
+    if (!e.target.matches('.vq')) return;
+    popState.q = e.target.value;
+    popState.list = null;
+    fillVoxPop(true);
+  });
+}
+function voxList() {
+  const P = popState, o = { cats: P.cat ? { [P.cat]: 1 } : null, lang: P.lang, sex: P.sex };
+  if (!P.list) P.list = (P.q.trim() ? voxSearch(P.q, o, 12) : voxShuffle(voxFilter(o)).slice(0, 12)).map(c => c.id);
+  return P.list.map(voxInfo).filter(Boolean);
+}
+function fillVoxPop(keepInput = false) {
+  const P = popState, x = state.tracks.vox.steps[P.i], c = x && voxInfo(x.a);
+  const chips = (a, list, cur) => Object.entries(list).map(([k, v]) => `<button class="tg${k === cur ? ' on' : ''}" data-a="${a}" data-v="${k}">${v}</button>`).join('');
+  const total = voxFilter({ cats: P.cat ? { [P.cat]: 1 } : null, lang: P.lang, sex: P.sex }).length;
+  const listHtml = voxList().map(v => `<button class="vxi${x && v.id === x.a ? ' on' : ''}" data-a="pick" data-id="${v.id}"><b>${esc(v.text)}</b><small>${esc(voiceName(v.voice))}</small></button>`).join('')
+    || '<p class="vxe">Ничего не нашлось — попробуй другое слово</p>';
+  if (keepInput && popEl.querySelector('.vxl')) {
+    popEl.querySelector('.vxl').innerHTML = listHtml;
+    popEl.querySelector('.vxn').textContent = `${total} фраз`;
+    return;
+  }
+  popEl.innerHTML = `<div class="ph"><b>Голос</b><span>шаг ${P.i + 1}${c ? ` · «${esc(c.text)}»` : ''}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="vxf"><button class="tg${!P.cat ? ' on' : ''}" data-a="cat" data-v="">Все</button>${chips('cat', VOX.cats, P.cat)}</div>`
+    + `<div class="vxf">${chips('lang', LANGS, P.lang)}<span class="vsep"></span>${chips('sex', SEXES, P.sex)}</div>`
+    + `<div class="vxs"><input class="vq" type="search" placeholder="Найти: давай, body, bass…" value="${esc(P.q)}"><span class="vxn">${total} фраз</span><button class="tg" data-a="more">🎲 Ещё</button></div>`
+    + `<div class="vxl">${listHtml}</div>`
+    + `<div class="pfoot"><span class="lenl">Эффект</span><button class="tg${x && !x.fx ? ' on' : ''}" data-a="fx" data-v=""${x ? '' : ' disabled'}>Как у дорожки</button>`
+    + VFX.map(f => `<button class="tg${x && x.fx === f ? ' on' : ''}" data-a="fx" data-v="${f}"${x ? '' : ' disabled'}>${SOUNDS.vox[f].name}</button>`).join('')
+    + `<button class="tg del" data-a="del"${x ? '' : ' disabled'}>Убрать</button></div>`;
+}
+function voxAction(b) {
+  const P = popState, a = b.dataset.a, tr = state.tracks.vox, steps = tr.steps;
+  if (a === 'cat') { P.cat = b.dataset.v || null; P.list = null; }
+  else if (a === 'lang') { P.lang = b.dataset.v; P.list = null; }
+  else if (a === 'sex') { P.sex = b.dataset.v; P.list = null; }
+  else if (a === 'more') P.list = null;
+  else if (a === 'pick') {
+    pushUndo();
+    const id = b.dataset.id;
+    steps[P.i] = { ...(steps[P.i] || {}), a: id };
+    delete steps[P.i].c;
+    // Выбранная вручную фраза входит в набор дорожки
+    tr.vox.pool = [id, ...(tr.vox.pool || []).filter(x => x !== id)].slice(0, 8);
+    tr.mute = false;
+    ensureAudio().then(() => voxFetch([id])).then(() => engine.preview('vox', id));
+    save();
+    renderGrid();
+  } else if (a === 'fx') {
+    pushUndo();
+    if (b.dataset.v) steps[P.i].fx = b.dataset.v; else delete steps[P.i].fx;
+    const x = steps[P.i];
+    ensureAudio().then(() => voxFetch([x.a])).then(() => engine.voxNote(engine.ctx.currentTime + 0.03, x, tr.p, 15 / state.bpm));
+    save();
+    renderGrid();
+  } else if (a === 'del') { pushUndo(); steps[P.i] = null; save(); renderGrid(); closePop(); return; }
+  const list = popEl.querySelector('.vxl'), sc = list ? list.scrollTop : 0;
+  fillVoxPop();
+  if (a === 'pick' || a === 'fx') popEl.querySelector('.vxl').scrollTop = sc;
+  placePop(P.cell);
+}
+
+// Окошко дорожки «Голос»: обработка, стиль фраз, язык, диктор, как часто
+function voxTrackHtml() {
+  const tr = state.tracks.vox, o = tr.vox;
+  const row = (lbl, a, list, cur) => `<div class="vrow"><span class="lenl">${lbl}</span>${Object.entries(list).map(([k, v]) => `<button class="tg${String(k) === String(cur) ? ' on' : ''}" data-a="${a}" data-v="${k}">${v}</button>`).join('')}</div>`;
+  const voices = { auto: 'Сам', ...Object.fromEntries(Object.entries(VOX.voices).filter(([, v]) => o.sex === 'any' || v[1] === o.sex).map(([k, v]) => [k, v[0]])) };
+  return `<div class="ph"><b>Голос</b><span>${VOX.ready ? `${VOX.clips.length} фраз` : 'загружаю фразы…'}</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="snds">${Object.entries(SOUNDS.vox).map(([sid, S]) => `<button class="snd${sid === tr.sound ? ' on' : ''}" data-s="${sid}"><b>${S.name}</b><small>${S.desc}</small></button>`).join('')}</div>`
+    + `<div class="vopts">${row('Фразы', 'style', Object.fromEntries(Object.entries(STYLES).map(([k, v]) => [k, v.name])), tr.variant)}`
+    + row('Язык', 'lang', LANGS, o.lang) + row('Голос', 'sex', SEXES, o.sex) + row('Диктор', 'voice', voices, o.voice || 'auto')
+    + row('Звучит', 'every', EVERY, o.every) + row('Смена', 'swap', { 1: 'фразы меняются по кругу', 0: 'одни и те же' }, o.swap ? 1 : 0) + '</div>'
+    + `<div class="pfoot"><button class="tg" data-a="pat">🎲 Другие адлибы</button><span class="vhint">подержи клетку — выбрать фразу из списка</span></div>`;
+}
+function voxTrackAction(b) {
+  const tr = state.tracks.vox, o = tr.vox, a = b.dataset.a, v = b.dataset.v;
+  if (!VOX.ready) return;
+  pushUndo();
+  if (a === 'style') { setPattern('vox', v); tr.mute = false; play(); }
+  else if (a === 'lang' || a === 'sex' || a === 'voice') {
+    if (a === 'voice') o.voice = v === 'auto' ? null : v;
+    else { o[a] = v; if (a === 'sex') o.voice = null; }
+    if (!isEmpty(tr) || a === 'voice') { setPattern('vox', tr.variant || defaultVariant('vox', state.genre)); tr.mute = false; }
+  } else if (a === 'every') o.every = +v;
+  else if (a === 'swap') o.swap = v === '1';
+  commit();
+  if (a !== 'every' && a !== 'swap') engine.preview('vox');
+  popEl.innerHTML = voxTrackHtml();
+  placePop(popState.anchor);
+}
+
 // Окошко выбора звука дорожки.
 function openSoundPop(anchor, id) {
-  openPop(anchor, soundHtml(id), 'sndpop', { kind: 'sound', id });
+  openPop(anchor, '', 'sndpop', { kind: 'sound', id, anchor });
+  popEl.innerHTML = soundHtml(id);
+  placePop(anchor);
 }
 function soundHtml(id) {
+  if (id === 'vox') return voxTrackHtml();
   const cur = state.tracks[id].sound;
+  // Живые звуки FL Studio: 12 случайных из всех подходящих, «🎲» — другие
+  let fl = '';
+  if (FL.ready && FL_TRACKS.includes(id)) {
+    const all = flCandidates(id);
+    if (popState && popState.id === id && !popState.flList) popState.flList = voxShuffle(all.slice()).slice(0, 12).map(i => i.id);
+    const list = (popState && popState.flList) || [];
+    fl = `<div class="flh"><span>Из FL Studio · ${all.length} звуков</span><button class="tg" data-a="flmore">🎲 Другие</button></div><div class="snds flsnds">`
+      + list.map(fid => { const it = FL.byId.get(fid); return `<button class="snd${fid === cur ? ' on' : ''}" data-fl="${fid}"><b>${esc(it.name)}</b><small>${esc(it.pack)}</small></button>`; }).join('') + '</div>';
+  }
   return `<div class="ph"><b>${NAME[id]}</b><span>нажми — послушать и выбрать</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div><div class="snds">`
-    + Object.entries(SOUNDS[id]).map(([sid, S]) => `<button class="snd${sid === cur ? ' on' : ''}" data-s="${sid}"><b>${S.name}</b><small>${S.desc}</small></button>`).join('')
+    + Object.entries(SOUNDS[id]).filter(([sid, S]) => !S.fl || sid === cur).map(([sid, S]) => `<button class="snd${sid === cur ? ' on' : ''}" data-s="${sid}"><b>${esc(S.name)}</b><small>${esc(S.desc)}</small></button>`).join('')
+    + '</div>' + fl + '<div class="snds" hidden>'
     + `</div><div class="pfoot"><button class="tg" data-a="pat">${NEWPAT[id][0].toUpperCase() + NEWPAT[id].slice(1)}</button></div>`;
 }
 async function soundAction(btn) {
   const { id } = popState;
   if (btn.dataset.a === 'close') { closePop(); return; }
   await ensureAudio();
+  if (id === 'vox' && btn.dataset.a && btn.dataset.a !== 'pat') { voxTrackAction(btn); return; }
   if (btn.dataset.a === 'pat') { closePop(); runText(NEWPAT[id], 'chip'); return; }
-  const sid = btn.dataset.s;
+  if (btn.dataset.a === 'flmore') { popState.flList = null; popEl.innerHTML = soundHtml(id); return; }
+  const sid = btn.dataset.fl ? flSound(id, btn.dataset.fl) : btn.dataset.s;
+  if (!sid) return;
+  if (btn.dataset.fl) await voxFetch([btn.dataset.fl]);
   pushUndo();
   setSound(id, sid);
   if (isEmpty(state.tracks[id])) setPattern(id, SOUNDS[id][sid].v || defaultVariant(id, state.genre));
@@ -1289,6 +1643,7 @@ function secHtml(i) {
     + `<div class="prow"><span>Гармония</span><div class="opts">${secProgs(s).map(k => `<button class="tg${k === (s.prog || 'none') ? ' on' : ''}" data-a="prog" data-v="${k}" title="${PROGS[k].name}">${k === 'none' ? 'На месте' : k === 'climb' ? 'Лестница вверх' : chordLine(k, ' – ')}</button>`).join('')}</div></div>`
     + `<div class="prow"><span>Смена</span><div class="opts">${PER_ORDER.map(v => `<button class="tg${v === (s.per || (PROGS[s.prog] || PROGS.none).per || 1) ? ' on' : ''}" data-a="per" data-v="${v}">${PER_LBL[v]}</button>`).join('')}</div></div>`
     + `<div class="prow"><span>Отыгрыш</span><div class="opts"><button class="tg${s.perf ? '' : ' on'}" data-a="perf" data-v="0">Нет</button><button class="tg${s.perf ? ' on' : ''}" data-a="perf" data-v="1">Каждый такт свой</button>${s.perf ? '<button class="tg" data-a="perf" data-v="1">🎲 Новая фраза</button>' : ''}</div></div>`
+    + `<div class="prow"><span>Голос</span><div class="opts"><button class="tg${s.vox ? '' : ' on'}" data-a="vox" data-v="0">Нет</button><button class="tg${s.vox ? ' on' : ''}" data-a="vox" data-v="1">${s.vox ? `Адлибы: ${s.vox.length}` : 'Адлибы'}</button>${s.vox ? '<button class="tg" data-a="vox" data-v="1">🎲 Другие фразы</button>' : ''}</div></div>`
     + `<div class="pfoot"><button class="tg lime" data-a="play">▶ Играть отсюда</button><button class="tg" data-a="left"${i ? '' : ' disabled'}>←</button><button class="tg" data-a="right"${i < n - 1 ? '' : ' disabled'}>→</button>`
     + `<button class="tg" data-a="reroll">🎲 Пересочинить часть</button><button class="tg" data-a="dup">Копия</button><button class="tg del" data-a="del"${n > 1 ? '' : ' disabled'}>Удалить</button></div>`;
 }
@@ -1318,6 +1673,16 @@ function secAction(btn) {
       if (!ids.length) { setDid('В этой части молчат мелодия, аккорды, перкуссия и бас — включи их в клетках ниже', true); return; }
       s.perf = makePerf(state, ids, s.bars);
       setDid(`Отыгрыш: ${names(ids)} — каждый такт свой`);
+    }
+  }
+  else if (a === 'vox') {
+    if (v === '0') { delete s.vox; s.lv.vox = 0; }
+    else if (!VOX.ready) { setDid('Голоса ещё загружаются', true); return; }
+    else {
+      songVox(i);
+      if (!s.vox) { setDid('В интро и аутро голос не ставлю — там диджей сводит треки', true); return; }
+      voxFetch(voxIdsOf(state));
+      setDid(`Голос в части «${PART[s.type].name}»: ${s.vox.map(e => `«${(voxInfo(e[2]) || {}).text}»`).filter((x, k, A) => A.indexOf(x) === k).slice(0, 3).join(', ')}`);
     }
   }
   else if (a === 'head') s.head = v;
@@ -1499,6 +1864,7 @@ function bind() {
     else if (popState.kind === 'sound') soundAction(b);
     else if (popState.kind === 'sec') secAction(b);
     else if (popState.kind === 'harm') harmAction(b);
+    else if (popState.kind === 'vox') voxAction(b);
     else if (popState.kind === 'lvl') {
       pushUndo();
       const sec = state.song.sections[popState.i], id = popState.id, v = +b.dataset.v;
@@ -1590,9 +1956,19 @@ function bind() {
       const i = rows[id].cells.indexOf(e.target.closest('.cell')), steps = stepsOf(id);
       if (i >= steps.length) return; // за пределами полиметрической фразы
       pushUndo();
+      if (!bank) tr.hand = true; // поправлено руками — новые варианты трека это не трогают
       if (TRACK[id].kind === 'drum') {
         const v = steps[i];
         steps[i] = !v ? 0.85 : v < 1 ? 1 : 0;
+      } else if (id === 'vox') {
+        if (!VOX.ready) return;
+        // Пустая клетка — новая фраза из набора дорожки, полная — убрать
+        if (steps[i]) steps[i] = null;
+        else {
+          const used = new Set(steps.filter(Boolean).map(x => x.a)), pool = voxPoolFor(), x = { a: pool.find(a => !used.has(a)) || pick(pool) };
+          steps[i] = x;
+          voxFetch([x.a]).then(() => { if (!engine.playing) engine.preview('vox', x.a); });
+        }
       } else {
         const n = steps[i];
         if (n && e.shiftKey) n.acc = !n.acc;
@@ -1612,11 +1988,11 @@ function bind() {
     const i = rows[id].cells.indexOf(cell);
     if (TRACK[id].kind === 'drum' || i >= stepsOf(id).length) return;
     ensureAudio();
-    openNotePop(cell, id, i);
+    if (id === 'vox') openVoxPop(cell, i); else openNotePop(cell, id, i);
   });
   $('#grid').addEventListener('wheel', e => {
     const cell = e.target.closest('.cell'), row = e.target.closest('.row');
-    if (!cell || !row || TRACK[row.dataset.id].kind === 'drum') return;
+    if (!cell || !row || TRACK[row.dataset.id].kind !== 'synth') return;
     const n = stepsOf(row.dataset.id)[rows[row.dataset.id].cells.indexOf(cell)];
     if (!n) return;
     e.preventDefault();
@@ -1637,7 +2013,43 @@ function bind() {
     save();
     renderSongCard();
   });
-  $('#rerollBtn').addEventListener('click', () => act({ type: 'song', minutes: state.songMin, reroll: true }, 'другой вариант трека'));
+  $('#rerollBtn').addEventListener('click', () => act({ type: 'nextTrack' }, 'следующий трек'));
+  $('#prevBtn').addEventListener('click', () => act({ type: 'prevTrack' }, 'предыдущий трек'));
+  // Смахнуть карточку трека влево — следующий, вправо — предыдущий (на телефоне)
+  {
+    let sw = null;
+    const card = $('#songCard');
+    card.addEventListener('pointerdown', e => {
+      if (!state.song || e.pointerType === 'mouse' || e.target.closest('.song-wrap, .seekrow, button, .pop')) return;
+      sw = { x: e.clientX, y: e.clientY, t: performance.now() };
+    });
+    card.addEventListener('pointerup', e => {
+      if (!sw) return;
+      const dx = e.clientX - sw.x, dy = e.clientY - sw.y, fast = performance.now() - sw.t < 700;
+      sw = null;
+      if (fast && Math.abs(dx) > 70 && Math.abs(dy) < 45) act({ type: dx < 0 ? 'nextTrack' : 'prevTrack' }, dx < 0 ? 'следующий трек' : 'предыдущий трек');
+    });
+    card.addEventListener('pointercancel', () => { sw = null; });
+  }
+  // Перемотка: ползунок, кнопки, график энергии, клавиши
+  const sc = $('#scrub');
+  bindScrub(sc, x => { const r = sc.getBoundingClientRect(); return clamp((x - r.left) / r.width, 0, 0.9999) * songBars(state.song); });
+  bindScrub($('#songTl'), barAtTl, e => !!e.target.closest('.en'));
+  $('#seekRow').addEventListener('click', e => {
+    const b = e.target.closest('[data-sk]');
+    if (!b || !state.song) return;
+    const v = b.dataset.sk;
+    ensureAudio().then(() => setDid('Перемотка: ' + seekSong(v === 'start' ? 0 : Math.floor(songPosBar()) + +v)));
+  });
+  sc.addEventListener('keydown', e => {
+    if (!state.song) return;
+    const total = songBars(state.song), cur = Math.floor(songPosBar());
+    const to = { ArrowLeft: cur - 1, ArrowDown: cur - 1, ArrowRight: cur + 1, ArrowUp: cur + 1, PageDown: cur - 8, PageUp: cur + 8, Home: 0, End: total - 1 }[e.key];
+    if (to == null) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDid('Перемотка: ' + seekSong(to));
+  });
   $('#heroBtn').addEventListener('click', e => {
     if (popState && popState.kind === 'hero') { closePop(); return; }
     openHeroPop(e.currentTarget);
@@ -1650,13 +2062,20 @@ function bind() {
     if (state.mode === 'song' && state.song) { openSecPop(harmNow().i); return; }
     openPop(btn, harmHtml(), 'harmpop', { kind: 'harm' });
   });
+  // A/B/C — что играет (с начала следующего такта, как переключение передач у диджея)
   $('#bankSeg').addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    bank = +b.dataset.b;
+    const v = b.dataset.b === 'auto' ? null : +b.dataset.b;
     closePop();
+    at('bar', () => { state.bank = v; bank = v || 0; });
+    state.bank = v;
+    bank = v || 0;
+    save();
     renderGrid();
-    setDid(bank ? `Секвенсор показывает рисунок ${'ABC'[bank]} — его тоже можно править` : 'Секвенсор показывает основной рисунок A');
+    if (!engine.playing) play();
+    setDid(v == null ? 'Авто: рисунки A/B/C переключает аранжировка трека'
+      : `Играет рисунок ${'ABC'[v]}${state.mode === 'song' ? ' во всём треке — «Авто» вернёт как было' : ''} · его можно править в клетках`);
   });
   $('#writeBtn').addEventListener('click', () => act({ type: 'song', minutes: state.songMin }, `сочини трек на ${fmtMin(state.songMin)}`));
   $('#renderBtn').addEventListener('click', async () => { const r = await saveSongWav(); setDid(r); log('сохрани трек', r, true); });
@@ -1686,6 +2105,10 @@ function bind() {
       ensureAudio().then(() => (engine.playing ? stop() : play()));
     } else if (e.key === 'Escape' && taking && taking.cancel) taking.cancel();
     else if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { if (undo()) commit(); }
+    else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.defaultPrevented && state.song && state.mode === 'song' && !e.target.closest?.('.fd, .scrub')) {
+      e.preventDefault();
+      setDid('Перемотка: ' + seekSong(Math.floor(songPosBar()) + (e.key === 'ArrowLeft' ? -8 : 8)));
+    }
   });
 }
 
@@ -1738,6 +2161,7 @@ function init() {
   engine.setMode(state.mode);
   engine.onStep = (s, t, bar) => { stepQ.push([t, s, bar]); if (stepQ.length > 64) stepQ.shift(); };
   engine.harmFn = (bar, s) => harmShift(state.harm.prog, state.harm.per, bar, s);
+  engine.loopFn = (id, bar) => loopSteps(state, id, bar);
   engine.onSongBar = (bar, t) => { songQ.push([t, bar]); if (songQ.length > 16) songQ.shift(); };
   engine.onSongEnd = t => {
     setTimeout(() => {
@@ -1752,6 +2176,8 @@ function init() {
   engine.onKick = t => viz.kick(t);
   bind();
   render();
+  // Каталог адлибов: тысячи фраз, звук каждой загружается, только когда она нужна
+  voxInit().then(ok => { if (ok) { voxAddFl(); voxFetch(voxIdsOf(state)); render(); } });
   requestAnimationFrame(frame);
   window.pulse = { engine, mic, voice, run: runText, get state() { return state; } }; // для отладки из консоли
 }

@@ -1,7 +1,7 @@
 // Разбор русских голосовых команд в список действий.
 // Работает по корням слов, поэтому понимает «бочку», «бочка», «бочки», «хэты», «хай-хэт» и т. п.
-import { VARIANTS } from './music.js?v=4';
-import { KIT_WORDS, SOUND_WORDS } from './sounds.js?v=4';
+import { VARIANTS } from './music.js?v=5';
+import { KIT_WORDS, SOUND_WORDS } from './sounds.js?v=5';
 
 const B = '(?<![а-яa-z0-9])';
 const rx = s => new RegExp(B + '(?:' + s + ')');
@@ -49,6 +49,7 @@ const INSTR = [
   ['bass', 'бас(?! ?барабан)|bass|303'],
   ['stab', 'стаб|стеб|аккорд|акорд|chord|stab|клавиш'],
   ['lead', 'мелоди(?!к|чн)|лид(?![а-я])|лида|лиду|синт|арп|lead|melody'],
+  ['vox', 'голос(?!ом)|вокал|адлиб|ад ?либ|ед ?либ|ad ?lib|выкрик|войс ?тег|войстег|фраз[аыу]?(?![а-я])|фразами|фразочк|диктор|эмси|мс(?![а-я])|кричалк'],
   ['rumble', 'рамбл|румбл|рокот|гул(?![а-я])|гула|гулом|rumble'],
   ['drums', 'барабан|ударн|драм|drums|ударку|ритм(?![а-я])|ритм секц'],
 ].map(([id, s]) => [id, rx(s), rxg(s)]);
@@ -62,6 +63,8 @@ const VARIANT_RX = {
   bass: [['808', '808|треп|трап|trap|гудящ'], ['acid', 'кислот|есид|асид|acid|303|визж|квак|резонанс'], ['deep', 'глубок|дип|deep|саб|низк|мягк|бархат|тепл'], ['offbeat', 'офбит|между долями|простой|прост'], ['rolling', 'катящ|катит|роллинг|rolling|ровн|шестнадцат|быстр|бегущ|галоп|драйв']],
   stab: [['pad', 'пед(?![а-я])|пад(?![а-я])|pad|подложк|мрачн|тягуч'], ['chords', 'ритмичн|быстр|част|детройт|хаус'], ['sparse', 'редк|реже|раз в такт'], ['dub', 'даб|dub|ех[оа](?![а-я])|глубок|космич']],
   lead: [['slow', 'мрачн|жутк|призрач|медленн'], ['melody', 'мелоди|напев|тем[ау](?![а-я])|риф'], ['arp', 'арп|арпедж|бегущ|перебор']],
+  vox: [['shouts', 'выкрик|крик'], ['chop', 'нарез|чоп|chop|рубл|по слогам'], ['count', 'отсчет|счет|считалк'], ['dark', 'темн|мрачн|шепот|глубок|гипно'],
+    ['soul', 'хаус|соул|душев'], ['move', 'двига|танц|про тело'], ['talk', 'про звук|про бас|про техно'], ['hype', 'завод|кричалк|призыв'], ['mix', 'микс|разн|всякие']],
 };
 for (const id in VARIANT_RX) VARIANT_RX[id] = VARIANT_RX[id].map(([v, s]) => [v, rx(s)]);
 
@@ -91,7 +94,10 @@ const R = Object.fromEntries(Object.entries({
   compose: 'напиши|сочини|сочиним|напишем|составь|аранжир|собери трек|построй трек',
   songMode: 'весь трек|трек целиком|целиком|полностью|режим трека|полный трек|проиграй трек|играй трек|сыграй трек|включи трек|по частям|с аранжиров',
   loopMode: 'петл|зацикл|режим петли|один такт|только такт|луп(?![а-я])',
-  seekStart: 'с начала|в начало|сначала|перемотай|отмотай',
+  seekStart: 'с начала|в начало|сначала',
+  seek: 'перемот|отмот|промот|мотани|перескоч|прыгни|перейди|(?:вперед|назад) на|в конец трека|к концу трека',
+  nextTrack: 'следующ\\S* (?:трек|вариант|песн)|дальше трек|листай|перелистн|пролистн|некст|next|не нравится|скип|skip',
+  prevTrack: 'предыдущ\\S* (?:трек|вариант|песн)|прошл\\S* (?:трек|вариант)|верни (?:прошл|предыдущ|тот трек|старый трек)|назад к трек|прежн\\S* трек',
   reroll: 'друг(?:ой|ая|ую|ое) (?:вариант|верси|трек|аранжиров)|еще (?:вариант|раз сочини)|пересочини|перепиши трек|новый вариант',
   harm: 'прогресс|гармони|смен\\S* аккорд|аккорд\\S* (?:меня|двига|ход|иду|пошл)|ход\\S* аккорд|круг\\S* аккорд|по аккордам',
   kit: 'набор|кит(?![а-я])|комплект|пресет|звуки|звучани',
@@ -113,7 +119,7 @@ const R = Object.fromEntries(Object.entries({
   transpose: 'транспон|подними тональн|опусти тональн|тональност\\S* (?:выше|ниже)|сдвинь тональн',
   swing: 'свинг|шафл|шаффл|swing|shuffle|раскач',
   dry: 'сух(?:о|ой|ая|ое|ие)(?![а-я])|без еффект|убери (?:все )?еффект',
-  rev: 'реверб|ревер|зал(?![а-я])|зала|залом|пространств|обьем|объем|reverb|простор|хол(?:л)?(?![а-я])',
+  rev: 'реверб|ревер(?!с)|зал(?![а-я])|зала|залом|пространств|обьем|объем|reverb|простор|хол(?:л)?(?![а-я])',
   dly: 'дилей|делей|дилеи|дилея|дилеем|задержк|ех(?:о|а|у|ом)(?![а-я])|delay|отзвук|повторы',
   acidMore: 'кислотнее|кислее|больше кисл|побольше кисл|еще кисл|сильнее кисл|прибавь кисл|резонанс|визг|писк|квак',
   acidLess: 'меньше кисл|поменьше кисл|без кисл|убери кисл|слабее кисл',
@@ -226,6 +232,8 @@ function parseClause(c) {
   const A = (type, o = {}) => ({ type, ...o });
 
   if (R.help.test(c)) return [A('help')];
+  const say = c.match(/(?<![а-я])(?:скажи|крикни|прокричи|произнеси|выкрикни|адлиб|ад либ)\s+(.+)/);
+  if (say && !findInstr(say[1]).filter(i => i !== 'vox').length) return [A('voxSay', { q: say[1] })];
   if (R.undo.test(c)) return [A('undo')];
   if (R.beatbox.test(c)) return [A('beatbox')];
   if (R.hum.test(c)) return [A('hum', { track: I.find(i => i === 'bass' || i === 'lead' || i === 'stab') || null })];
@@ -241,6 +249,26 @@ function parseClause(c) {
   }
 
   if (!hasI) {
+    // Перемотка: «перемотай вперёд», «назад на 8 тактов», «на 30 секунд вперёд», «на 2 минуты», «к дропу»
+    if (R.seek.test(c)) {
+      if (/начал|сначала/.test(c)) return [A('seek', { bar: 0 })];
+      if (/конец|конц/.test(c)) return [A('seek', { end: true })];
+      const PARTS = [['drop', 'дроп'], ['break', 'брейк'], ['rise', 'подъем|подьем|нарастан'], ['pit', 'ям[уеа]'], ['main', 'грув'], ['build', 'набор'], ['intro', 'интро'], ['outro', 'аутро'], ['down', 'спад']];
+      const part = PARTS.find(([, w]) => new RegExp(w).test(c));
+      if (part) return [A('seek', { types: [part[0]] })];
+      const dir = /назад|отмот|обратно/.test(c) ? -1 : /вперед|дальше|промот/.test(c) ? 1 : 0;
+      const n = firstNum(nums, 1, 600);
+      const half = /полминут/.test(c) ? 30 : /полтор/.test(c) ? 90 : null;
+      const mm = c.match(/(?:минут\S* (\d+)(?: (\d+))?|(\d+) (\d+)(?![0-9]))/);
+      let sec = null;
+      if (half) sec = half;
+      else if (/секунд/.test(c) && n) sec = n;
+      else if (mm && !dir) sec = mm[1] ? +mm[1] * 60 + (+mm[2] || 0) : +mm[3] * 60 + +mm[4];
+      else if (/минут/.test(c)) sec = (n || 1) * 60;
+      if (sec != null) return [A('seek', dir ? { dsec: dir * sec } : { sec })];
+      if (/такт/.test(c) && n) return [A('seek', { delta: (dir || 1) * n })];
+      return [A('seek', { delta: (dir || 1) * 16 })];
+    }
     // Наборы звуков: «набор витч хаус», «звуки 808»
     if (R.kit.test(c)) {
       const k = findWord(KITW, c);
@@ -248,9 +276,11 @@ function parseClause(c) {
     }
     const g = GENRE_RX.find(([, re]) => re.test(c));
     const mins = minutes(c);
-    // «другой вариант» — тот же паттерн, новый номер варианта; «вариант 777» — конкретный вариант
+    // «другой вариант» — новый номер: свои партии, звуки и аранжировка; «вариант 777» — конкретный вариант
     const vm = c.match(/(?<![а-я])вариант\S* (?:номер )?(\d+)/);
     if (vm) return [...(g ? [A('genre', { id: g[0] })] : []), A('song', { minutes: mins, seed: +vm[1] })];
+    if (R.prevTrack.test(c)) return [A('prevTrack')];
+    if (R.nextTrack.test(c)) return [A('nextTrack')];
     if (R.reroll.test(c)) return [A('song', { minutes: mins, reroll: true })];
     // Трек целиком: «напиши трек на 3 минуты», «сочини витч хаус», «сделай техно на 4 минуты»
     if (mins || (R.compose.test(c) && (g || R.genObj.test(c)))) {
@@ -335,6 +365,19 @@ function parseClause(c) {
     let d = R.octave.test(c) ? 12 : R.semi.test(c) ? 1 : R.tone.test(c) ? 2 : firstNum(nums, 1, 24) || null;
     const dir = R.down.test(c) ? -1 : 1;
     return [...out, A('pitch', { tracks: I, delta: d == null ? null : d * dir, dir })];
+  }
+
+  // Голос: язык, пол, диктор, обработка, другие фразы
+  if (I.length === 1 && I[0] === 'vox') {
+    const lang = /русск/.test(c) ? 'ru' : /англ|инглиш|english/.test(c) ? 'en' : /оба язык|обоих язык|смеша/.test(c) ? 'mix' : null;
+    if (lang) return [...out, A('voxLang', { lang })];
+    const sex = /мужск|мужик|парн|пацан/.test(c) ? 'm' : /женск|девуш|девич|женщин|девчон/.test(c) ? 'f' : null;
+    if (sex) return [...out, A('voxVoice', { sex })];
+    const fxw = findWord(SNDW.vox, c);
+    if (fxw && !R.mute.test(c) && !R.clear.test(c)) return [...out, A('sound', { tracks: ['vox'], name: fxw })];
+    const variants = variantsFor(I, c);
+    if (R.other.test(c) && /голос|диктор|мс|эмси/.test(c) && !/либ|фраз|выкрик|кричалк/.test(c) && !Object.keys(variants).length) return [...out, A('voxVoice', {})];
+    if (R.other.test(c) && !R.solo.test(c)) return [...out, A('regen', { tracks: ['vox'], variants })];
   }
 
   if (hasI) {

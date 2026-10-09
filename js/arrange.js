@@ -1,7 +1,18 @@
 // Аранжировка: как из одного такта сделать трек на 1–5 минут — и каждый раз другой.
 // Генератор собирает трек из блоков по 16 тактов по правилам жанра (PROFILES) и одной из форм (FORMS).
 // Каждый вариант получает номер (seed): с тем же номером получится тот же трек. Правила словами — в ARRANGEMENT.md.
-import { TRACK, isEmpty, deg, semiToDeg, makePattern, VARIANTS, defaultVariant, PROGS, GENRE_PROGS, harmShift } from './music.js?v=4';
+import { TRACK, isEmpty, deg, semiToDeg, makePattern, VARIANTS, defaultVariant, PROGS, GENRE_PROGS, harmShift, freshParts } from './music.js?v=5';
+import { VOX, genreVox, planSongVox } from './vox.js?v=5';
+import { FL } from './fl.js?v=5';
+
+// Звуки FL для переходов трека (если есть): свой райзер, удар, спуск и пара «приколов»
+function planFlFx() {
+  if (!FL.ready) return null;
+  const of = c => FL.items.filter(i => i.cat === c);
+  const one = c => { const l = of(c); return l.length ? pick(l).id : null; };
+  const ear = shuffle(of('fx')).slice(0, 3).map(i => i.id);
+  return { riser: one('riser'), impact: one('impact'), down: one('down'), ear };
+}
 
 export { PROGS };
 
@@ -503,9 +514,11 @@ function planPatterns(sec, k, ctx, bl) {
 }
 
 // Сочинить трек: state меняется (пустые партии, которые нужны жанру, дописываются), возвращается song.
-export function compose(state, minutes, genre, seed) {
+// fresh — новый вариант: свои бочка, бас, хэты, аккорды и звуки (кроме напетого и поправленного руками).
+export function compose(state, minutes, genre, seed, fresh = false) {
   return withSeed(seed, () => {
     const pid = profileFor(genre), prof = PROFILES[pid];
+    if (fresh) freshParts(state, genre || 'peak');
     // Партии, которых нет, сочиняем, иначе блокам нечего играть
     for (const id of [...prof.groove, ...prof.music]) {
       const tr = state.tracks[id];
@@ -544,7 +557,15 @@ export function compose(state, minutes, genre, seed) {
       ctx.prev = lv;
       return sec;
     });
-    return { genre: pid, seed, form: formId, hero, harm: ctx.harm, alt: makeAlts(state, genre), sections };
+    // Голос: адлибы в груве и дропах, тёмные фразы в брейке, нарезка в яме, призыв перед дропом.
+    // Сами решают жанр и номер варианта; если дорожка «Голос» уже заполнена — голос будет точно.
+    const vt = state.tracks.vox;
+    let vox = null;
+    if (vt && VOX.ready && (!isEmpty(vt) || chance(genreVox(pid).use))) {
+      const v = planSongVox(sections, pid, vt.vox, state.bpm);
+      vox = v && { voice: v.voice };
+    }
+    return { genre: pid, seed, form: formId, hero, harm: ctx.harm, alt: makeAlts(state, genre), sections, vox, flfx: planFlFx() };
   });
 }
 
@@ -559,6 +580,7 @@ export function rerollSection(state, i) {
   planDetails(sec, bl, nx && { type: nx.type, b: 0 }, i, ctx);
   planPatterns(sec, Math.max(1, i), ctx, bl);
   planPerf(sec, ctx, state);
+  if (song.vox && VOX.ready) planSongVox(song.sections, song.genre, { ...state.tracks.vox.vox, voice: song.vox.voice }, state.bpm, i);
 }
 
 export function locate(song, bar) {
@@ -677,6 +699,13 @@ function improvise(steps, sec, j, bar, song, scale, shiftAt, skip) {
 }
 
 // Рисунок дорожки в такте bar: выбранный вариант (A/B/C); полиметр продолжается через такты.
+// Шаги рисунка в петле: A — сама дорожка, B и C — из трека (state.bank).
+export function loopSteps(state, id, bar) {
+  const T = state.tracks[id], b = state.bank, alt = b && state.song && state.song.alt && state.song.alt[id];
+  if (!alt || !alt[b - 1]) return T.steps;
+  return source(state, id, b, bar) || T.steps.map(() => (TRACK[id].kind === 'drum' ? 0 : null));
+}
+
 function source(state, id, pi, bar) {
   const alt = state.song.alt && state.song.alt[id];
   let src = pi && alt && alt[pi - 1] ? alt[pi - 1] : state.tracks[id].steps;
@@ -702,7 +731,9 @@ export function barData(state, bar) {
     gain[id] = 1;
     cut[id] = 1;
     const pf = l && perf[id];
-    const src = pf ? pf[j % pf.length] : l ? source(state, id, pats[id] || 0, bar) : null;
+    // Кнопки A/B/C в режиме трека: выбранный рисунок вместо того, что решила аранжировка
+    const pi = state.bank != null ? state.bank : pats[id] || 0;
+    const src = pf ? pf[j % pf.length] : l ? source(state, id, pi, bar) : null;
     if (!src || (enter[id] && j < Math.floor(n * enter[id]))) { steps[id] = null; continue; }
     if (drum(id)) { steps[id] = l === 1 ? thin(id, src) : l === 3 ? thick(id, src) : src.slice(); continue; }
     const s = src.map((x, k) => {
@@ -719,6 +750,12 @@ export function barData(state, bar) {
     if (l === 1) { gain[id] = 0.6; cut[id] = 0.5; } else if (l === 3) cut[id] = 1.35;
   }
   if (sec.bassF) { const [a, b] = sec.bassF; cut.bass *= a + (b - a) * (n > 1 ? j / (n - 1) : 1); }
+  // Голос: адлибы этого такта
+  if (sec.vox) {
+    const v = Array(16).fill(null);
+    for (const [jj, st, a, fx, c] of sec.vox) if (jj === j) v[st] = { a, ...(fx ? { fx } : {}), ...(c != null ? { c, len: 2 } : {}) };
+    if (v.some(Boolean)) steps.vox = v;
+  }
   improvise(steps, sec, j, bar, song, state.scale, shiftAt, perf);
   // Руки на ручках: фильтр баса, аккордов и мелодии медленно «гуляет» — у каждого варианта по-своему
   ['bass', 'stab', 'lead'].forEach((id, k) => {
@@ -749,9 +786,18 @@ export function barData(state, bar) {
   } else if (groove && j > 0 && j % 16 === 0) fx.push({ type: 'crash' });
   if (last && sec.out === 'fill') fill(steps, 'end');
   else if (groove && !last && (j + 1) % 8 === 0) fill(steps, ((j + 1) / 8) % 2 ? 'snare' : 'skip');
+  const fl = song.flfx;
+  if (fl) {
+    // Удар FL в начале дропа, спуск — после него; «прикол» — на стыке, где музыка замирает, и иногда в начале брейка
+    if (j === 0 && sec.type === 'drop' && fl.impact) fx.push({ type: 'flfx', id: fl.impact, vol: 0.75 });
+    if (j === 0 && sec.in === 'down' && fl.down) fx.push({ type: 'flfx', id: fl.down, vol: 0.6 });
+    const ear = fl.ear || [];
+    if (ear.length && last && ['gap', 'stop', 'swell', 'wash', 'delay'].includes(sec.out) && hash(song.seed || 1, L.i, 5) % 3 === 0) fx.push({ type: 'flfx', id: ear[L.i % ear.length], at: 12, vol: 0.55 });
+    if (ear.length && j === 0 && sec.type === 'break' && hash(song.seed || 1, L.i, 9) % 2 === 0) fx.push({ type: 'flfx', id: ear[(L.i + 1) % ear.length], vol: 0.5 });
+  }
   if (sec.out === 'rise') {
     const R = Math.min(8, n);
-    if (j === n - R) fx.push({ type: 'riser', bars: R });
+    if (j === n - R) { fx.push({ type: 'riser', bars: R }); if (fl && fl.riser) fx.push({ type: 'flfx', id: fl.riser, end: R, vol: 0.7 }); }
     if (last) { clearFrom(steps, ['kick', 'bass'], 8); clearFrom(steps, LANES, 12); }
   }
   if (last) {

@@ -1,5 +1,7 @@
 // Музыкальная часть «Пульса»: лады, дорожки, паттерны, генераторы и жанры.
-import { SOUNDS, KITS } from './sounds.js?v=4';
+import { SOUNDS, KITS } from './sounds.js?v=5';
+import { STYLES, voxDefaults, voxPattern, genreVox } from './vox.js?v=5';
+import { FL, flCandidates, flSound } from './fl.js?v=5';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const NOTE_RU = ['До', 'До-диез', 'Ре', 'Ми-бемоль', 'Ми', 'Фа', 'Фа-диез', 'Соль', 'Соль-диез', 'Ля', 'Си-бемоль', 'Си'];
@@ -109,6 +111,7 @@ export const TRACKS = [
   { id: 'bass', name: 'Бас', kind: 'synth', color: '#b67cff' },
   { id: 'stab', name: 'Аккорды', kind: 'synth', color: '#4dffb8' },
   { id: 'lead', name: 'Мелодия', kind: 'synth', color: '#ff8a4d' },
+  { id: 'vox', name: 'Голос', kind: 'vox', color: '#ffe14d' },
 ];
 export const TRACK = Object.fromEntries(TRACKS.map(t => [t.id, t]));
 
@@ -122,6 +125,7 @@ const MIX = {
   bass: { vol: -2, rev: 0, dly: 0 },
   stab: { vol: -5, rev: 0.3, dly: 0.4 },
   lead: { vol: -6, rev: 0.2, dly: 0.3 },
+  vox: { vol: -3, rev: 0.16, dly: 0.1 },
 };
 export const DEFAULT_SOUND = { ...KITS.techno.s };
 export const DEFAULT_PARAMS = Object.fromEntries(Object.keys(MIX).map(id => [id, { ...MIX[id], ...SOUNDS[id][DEFAULT_SOUND[id]].p }]));
@@ -138,6 +142,7 @@ export const isEmpty = tr => !tr.steps.some(Boolean);
 export function emptyState() {
   const tracks = {};
   for (const t of TRACKS) tracks[t.id] = { steps: emptySteps(t.id), mute: false, solo: false, variant: null, sound: DEFAULT_SOUND[t.id], p: structuredClone(DEFAULT_PARAMS[t.id]) };
+  tracks.vox.vox = voxDefaults(); // язык, пол и диктор, как часто звучит, из каких фраз меняется
   return {
     v: 1, bpm: 130, swing: 0, key: 9, scale: 'minor', genre: null, metronome: false,
     master: { vol: 0, cut: 20000, rumble: 0, delay: 0.55, reverb: 0.55 },
@@ -158,12 +163,16 @@ export function fixState(s) {
     const steps = Array.isArray(src.steps) && src.steps.length === 16 ? src.steps : base.tracks[t.id].steps;
     const kit = KITS[GENRES[out.genre]?.kit];
     const sound = SOUNDS[t.id][src.sound] ? src.sound : kit ? kit.s[t.id] : DEFAULT_SOUND[t.id];
-    out.tracks[t.id] = { steps, mute: !!src.mute, solo: !!src.solo, variant: src.variant || null, sound, p: { ...soundParams(t.id, sound), ...(src.p || {}) } };
+    out.tracks[t.id] = { steps, mute: !!src.mute, solo: !!src.solo, variant: src.variant || null, sound, p: { ...soundParams(t.id, sound), ...(src.p || {}) }, ...(src.hand ? { hand: true } : {}) };
   }
+  const vx = out.tracks.vox;
+  vx.vox = { ...voxDefaults(), ...((s.tracks && s.tracks.vox && s.tracks.vox.vox) || {}) };
+  vx.steps = vx.steps.map(x => (x && typeof x === 'object' && x.a ? x : null));
   if (!out.song || !Array.isArray(out.song.sections) || !out.song.sections.length) out.song = null;
   if (out.mode !== 'song' || !out.song) out.mode = 'loop';
   const h = s.harm || {};
   out.harm = { prog: PROGS[h.prog] ? h.prog : 'none', per: PERS[h.per] ? +h.per : 1, auto: h.auto !== false };
+  out.bank = [0, 1, 2].includes(s.bank) ? s.bank : null; // A/B/C вручную или null — «Авто»
   out.songMin = Math.min(5, Math.max(1, Math.round((+out.songMin || 3) * 2) / 2));
   return out;
 }
@@ -187,7 +196,7 @@ export const pat = s => [...s].map(c => VEL[c] ?? 0);
 
 const DRUMS = {
   kick: {
-    four: ['X...X...X...X...'],
+    four: ['X...X...X...X...', 'X...X...X...X...', 'X...X...X...X..x', 'X...X...X..xX...', 'X...X..xX...X...', 'X...X...X...X.x.'],
     broken: ['X..x..X...X..x..', 'X...X..x..X.x...', 'X..X..X...X.....', 'X...X...X..x.x..'],
     half: ['X.......X.......', 'X.........X.....'],
     gallop: ['X..xX...X..xX...', 'X...X..xX...X..x'],
@@ -222,6 +231,7 @@ export const VARIANT_RU = {
   dub: 'даб с эхом', chords: 'ритмичные', arp: 'арпеджио', melody: 'новая линия',
   trap: 'трэп-халфтайм', slow: 'медленная, на третью долю', 808: 'гудящий 808 с глайдами', pad: 'длинные мрачные аккорды',
   house: 'хаус-бас с октавами',
+  ...Object.fromEntries(Object.entries(STYLES).map(([k, v]) => [k, v.name.toLowerCase()])),
 };
 
 export const VARIANTS = {
@@ -233,9 +243,11 @@ export const VARIANTS = {
   bass: ['acid', 'rolling', 'deep', 'offbeat', '808', 'house'],
   stab: ['dub', 'chords', 'sparse', 'pad'],
   lead: ['arp', 'melody', 'slow'],
+  vox: Object.keys(STYLES),
 };
 
 export function defaultVariant(id, genre) {
+  if (id === 'vox') return genreVox(genre).style;
   if (genre === 'witch') return { kick: 'trap', clap: 'slow', hat: 'trap', ohat: 'sparse', perc: 'sparse', bass: '808', stab: 'pad', lead: 'slow' }[id];
   if (id === 'bass') return genre === 'acid' ? 'acid' : genre === 'dub' || genre === 'minimal' ? 'deep' : genre === 'house' ? 'house' : 'rolling';
   if (id === 'stab') return genre === 'detroit' || genre === 'house' ? 'chords' : genre === 'melodic' ? 'pad' : 'dub';
@@ -265,10 +277,24 @@ function genBass(v, scale) {
     }
     s[0] = N(0, { acc: true });
   } else if (v === 'rolling') {
-    for (const i of [2, 3, 6, 7, 10, 11, 14, 15]) s[i] = N(0, { acc: i % 4 === 2 });
-    // Не одна нота по кругу: вторая шестнадцатая в паре иногда уходит на октаву, квинту или септиму
-    const moves = shuffle([3, 7, 11, 15]).slice(0, 1 + Math.floor(rnd() * 3));
-    for (const i of moves) s[i] = N(deg(scale, pick([7, 7, 4, -1, 2, -3])));
+    // Катящийся бас: своя группировка шестнадцатых между ударами бочки и свой мелодический ход
+    const grid = pick([
+      [2, 3, 6, 7, 10, 11, 14, 15], [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15], [1, 3, 5, 7, 9, 11, 13, 15],
+      [2, 3, 5, 6, 7, 10, 11, 13, 14, 15], [1, 2, 5, 6, 9, 10, 13, 14], [2, 3, 7, 10, 11, 15], [3, 6, 7, 10, 14, 15],
+      [2, 3, 6, 7, 9, 10, 11, 14, 15], [1, 2, 3, 6, 7, 9, 10, 11, 14],
+    ]);
+    const shape = pick(['pedal', 'oct', 'fifth', 'walk', 'answer', 'zigzag', 'pedal']);
+    const walk = pick([[0, 0, 2, 0, 4, 0, 2, -1], [0, 2, 3, 4, 3, 2, 0, -1], [0, 0, -1, 0, -3, 0, -1, 0], [0, 4, 0, 6, 0, 4, 2, 0]]);
+    const ans = pick([2, 4, -1, 5, 3]);
+    grid.forEach((i, k) => {
+      const d = shape === 'oct' ? (k % 2 ? 7 : 0) : shape === 'fifth' ? (k % 3 === 2 ? 4 : 0) : shape === 'walk' ? walk[k % 8]
+        : shape === 'answer' ? (i >= 12 ? ans : 0) : shape === 'zigzag' ? [0, 7, 4, 7][k % 4] : 0;
+      s[i] = N(deg(scale, d), { acc: i % 4 === 2 || rnd() < 0.12 });
+    });
+    // И ещё пара отступлений: октава, квинта, септима
+    if (shape === 'pedal' || rnd() < 0.4) {
+      for (const i of shuffle(grid.filter(i => i % 4 === 3)).slice(0, 1 + Math.floor(rnd() * 3))) s[i] = N(deg(scale, pick([7, 7, 4, -1, 2, -3])));
+    }
   } else if (v === 'house') {
     // Хаус: офбиты с прыжками на октаву и подходом к следующей доле
     const shape = pick([
@@ -279,8 +305,13 @@ function genBass(v, scale) {
     ]);
     for (const [i, d] of shape) s[i] = N(deg(scale, d), { acc: i % 4 === 2 });
   } else if (v === 'deep') {
-    for (const i of [2, 6, 10, 14]) s[i] = N(0, { len: 2 });
-    if (rnd() < 0.6) s[14] = N(deg(scale, pick([4, -3, 2])), { len: 2 });
+    // Глубокий: длинные мягкие ноты, у каждого варианта свой ритм и ход
+    const shape = pick([
+      [[2, 2], [6, 2], [10, 2], [14, 2]], [[0, 3], [6, 2], [10, 4]], [[2, 3], [8, 2], [10, 4]], [[2, 2], [7, 1], [10, 2], [14, 2]],
+      [[2, 4], [10, 2], [13, 3]], [[3, 2], [6, 3], [11, 2], [14, 2]], [[2, 2], [6, 2], [9, 2], [12, 3]],
+    ]);
+    const moves = pick([[0, 0, 0, 0], [0, 0, 0, 4], [0, 0, -3, 0], [0, 2, 0, -1], [0, 0, 4, 2], [0, -1, 0, 0]]);
+    shape.forEach(([i, len], k) => { s[i] = N(deg(scale, moves[k % 4]), { len }); });
   } else if (v === '808') {
     // Длинные гудящие ноты с глайдами — как в трэпе и витч-хаусе.
     const motif = pick([
@@ -291,8 +322,10 @@ function genBass(v, scale) {
     ]);
     for (const [i, d, len, slide] of motif) s[i] = N(deg(scale, d), { len, slide: !!slide });
   } else {
-    for (const i of [2, 6, 10, 14]) s[i] = N(0);
-    if (rnd() < 0.5) s[10] = N(12);
+    // Офбит: на «и» каждой доли, иногда с подхватом и прыжками
+    const at = pick([[2, 6, 10, 14], [2, 6, 10, 13, 14], [2, 5, 6, 10, 14], [2, 6, 7, 10, 14, 15], [2, 6, 10, 11, 14], [2, 3, 6, 10, 14]]);
+    const cont = pick([[0, 0, 0, 0], [0, 7, 0, 7], [0, 0, 7, 4], [0, 0, 0, -1], [0, 4, 0, 6], [0, 0, 2, 4], [0, 0, 7, 0]]);
+    for (const i of at) s[i] = N(deg(scale, i % 4 === 2 ? cont[i >> 2] : pick([0, 7, 4])), { acc: i === 2 });
   }
   return s;
 }
@@ -355,6 +388,7 @@ function genLead(v, scale) {
 export function makePattern(id, variant, scale = 'minor') {
   const v = variant || defaultVariant(id);
   if (id === 'perc') return genPerc(v);
+  if (id === 'vox') return voxPattern(v, voxDefaults()).steps;
   if (TRACK[id].kind === 'drum') {
     const lib = DRUMS[id][v] || DRUMS[id][defaultVariant(id)];
     return pat(pick(lib));
@@ -462,6 +496,59 @@ export const GENRES = {
 };
 export const GENRE_IDS = Object.keys(GENRES);
 
+// Из чего жанр собирает партии: рисунки (с весами) и звуки. Каждый новый бит и каждый вариант трека
+// берут отсюда своё — поэтому бочка, бас, хэты и аккорды не одни и те же каждый раз.
+const T909 = { kick: ['k909', 'k909', 'kpunch', 'kdeep', 'khard'], clap: ['c909', 'c909', 'crim', 'csnap', 'c808'], hat: ['h909', 'h909', 'hnoise', 'h808', 'hmetal'], ohat: ['o909', 'oride', 'onoise'], perc: ['ptom', 'pblip', 'pconga', 'pcow', 'pmetal'], bass: ['broll', 'broll', 'bsquare', 'breese', 'bsub', 'b303q'], stab: ['sdub', 'spluck', 'sorgan', 'srave', 'spad'], lead: ['lsaw', 'lsquare', 'lpluck', 'lbell', 'lsine'] };
+const POOL = {
+  peak: { pat: { kick: { four: 5, gallop: 1, broken: 1 }, clap: { back: 4, sync: 2, sparse: 1 }, hat: { off: 4, six: 2, eight: 1, gallop: 1 }, ohat: { off: 3, sparse: 1 }, perc: { gen: 1 }, bass: { rolling: 4, offbeat: 2, deep: 1, acid: 1 }, stab: { dub: 3, sparse: 1, chords: 1 }, lead: { arp: 2, melody: 1 } }, snd: T909 },
+  acid: { pat: { kick: { four: 5, gallop: 1, broken: 1 }, clap: { back: 3, sync: 2 }, hat: { six: 3, off: 2, eight: 1 }, ohat: { off: 3, sparse: 1 }, perc: { gen: 1 }, bass: { acid: 1 }, stab: { sparse: 1, dub: 1 }, lead: { arp: 1, melody: 1 } },
+    snd: { ...T909, kick: ['k909', 'k909', 'kpunch', 'khard'], bass: ['b303', 'b303', 'b303q'], perc: ['pblip', 'pcow', 'ptom'], stab: ['spluck', 'sdub', 'srave'] } },
+  minimal: { pat: { kick: { four: 4, broken: 1 }, clap: { sparse: 2, sync: 1 }, hat: { six: 2, off: 2, sparse: 1 }, ohat: { sparse: 1 }, perc: { gen: 1 }, bass: { deep: 3, offbeat: 2, rolling: 1 }, stab: { sparse: 3, dub: 1 }, lead: { arp: 1 } },
+    snd: { ...T909, kick: ['kdeep', 'kdeep', 'kpunch', 'k909'], clap: ['crim', 'csnap', 'crim'], hat: ['hnoise', 'h909', 'hshaker'], bass: ['bsquare', 'bsub', 'b303q', 'bsquare'], stab: ['spluck', 'sdub'], lead: ['lsine', 'lpluck'] } },
+  industrial: { pat: { kick: { four: 4, gallop: 2, broken: 1 }, clap: { back: 3, sync: 2 }, hat: { six: 3, eight: 1, gallop: 1 }, ohat: { off: 2, sparse: 1 }, perc: { gen: 1 }, bass: { rolling: 3, offbeat: 1 }, stab: { sparse: 1, dub: 1 }, lead: { arp: 1, slow: 1 } },
+    snd: { ...T909, kick: ['kind', 'kind', 'khard', 'kpunch'], clap: ['cind', 'cind', 'c909', 'csnare'], hat: ['hmetal', 'hmetal', 'hnoise'], ohat: ['oride', 'onoise'], perc: ['pmetal', 'pmetal', 'ptom'], bass: ['breese', 'broll', 'breese'], stab: ['srave', 'sdub'] } },
+  dub: { pat: { kick: { four: 1 }, clap: { sparse: 1, back: 1 }, hat: { off: 3, six: 1, sparse: 1 }, ohat: { sparse: 1, off: 1 }, perc: { gen: 1 }, bass: { deep: 3, offbeat: 1 }, stab: { dub: 1 }, lead: { slow: 1, arp: 1 } },
+    snd: { ...T909, kick: ['kdeep', 'kdeep', 'k909'], clap: ['csnap', 'crim'], hat: ['hshaker', 'hnoise', 'h909'], ohat: ['onoise', 'oride'], perc: ['pconga', 'pblip'], bass: ['bsub', 'bsub', 'bsquare'], stab: ['sdub', 'sdub', 'spad'], lead: ['lsine', 'lbell'] } },
+  detroit: { pat: { kick: { four: 4, broken: 1 }, clap: { back: 3, sync: 1 }, hat: { six: 2, off: 2, eight: 1 }, ohat: { off: 1 }, perc: { gen: 1 }, bass: { rolling: 2, offbeat: 2, house: 1 }, stab: { chords: 3, dub: 1 }, lead: { melody: 1, arp: 1 } },
+    snd: { ...T909, kick: ['k909', 'k909', 'kpunch'], clap: ['c909', 'c808', 'csnap'], perc: ['pcow', 'pconga', 'ptom'], bass: ['bsquare', 'broll', 'b303q'], stab: ['sorgan', 'sorgan', 'skeys', 'spad'], lead: ['lsquare', 'lbell', 'lsaw'] } },
+  melodic: { pat: { kick: { four: 1 }, clap: { back: 3, sparse: 1 }, hat: { off: 3, six: 1 }, ohat: { sparse: 2, off: 1 }, perc: { gen: 1 }, bass: { rolling: 3, deep: 1, offbeat: 1 }, stab: { pad: 3, chords: 1 }, lead: { arp: 2, melody: 2 } },
+    snd: { ...T909, kick: ['kpunch', 'k909', 'kdeep'], clap: ['c808', 'c909', 'csnap'], bass: ['broll', 'bsub', 'breese'], stab: ['spad', 'spad', 'schoir', 'spluck'], lead: ['lbell', 'lpluck', 'lsine', 'lsaw'] } },
+  hypnotic: { pat: { kick: { four: 4, broken: 1 }, clap: { sparse: 1, sync: 1 }, hat: { six: 3, off: 1 }, ohat: { sparse: 2, off: 1 }, perc: { three: 2, gen: 2 }, bass: { rolling: 2, deep: 2, offbeat: 1 }, stab: { dub: 2, sparse: 1 }, lead: { arp: 1, slow: 1 } },
+    snd: { ...T909, kick: ['kpunch', 'kdeep', 'khard'], clap: ['crim', 'csnap'], hat: ['hnoise', 'h909', 'hmetal'], ohat: ['oride', 'onoise'], perc: ['pconga', 'ptom', 'pblip', 'pmetal'], bass: ['bsub', 'broll', 'bsquare'], stab: ['sdub', 'spluck'], lead: ['lpluck', 'lsine'] } },
+  house: { pat: { kick: { four: 1 }, clap: { back: 4, sync: 1 }, hat: { six: 2, off: 2, eight: 1 }, ohat: { off: 3, sparse: 1 }, perc: { gen: 1 }, bass: { house: 4, offbeat: 1 }, stab: { chords: 3, dub: 1 }, lead: { melody: 1, arp: 1 } },
+    snd: { ...T909, kick: ['khouse', 'khouse', 'k909'], clap: ['c909', 'csnap', 'c808'], hat: ['hshaker', 'hshaker', 'h909'], ohat: ['o909', 'o808'], perc: ['pconga', 'pconga', 'pcow', 'ptom'], bass: ['bhouse', 'bhouse', 'bsquare', 'b303q'], stab: ['skeys', 'skeys', 'sorgan', 'spluck'], lead: ['lbell', 'lsine', 'lpluck'] } },
+  hard: { pat: { kick: { four: 4, gallop: 2 }, clap: { back: 3, every: 1, sync: 1 }, hat: { six: 3, off: 1, gallop: 1 }, ohat: { off: 3 }, perc: { gen: 1 }, bass: { rolling: 4, offbeat: 1 }, stab: { sparse: 1, chords: 1 }, lead: { arp: 1 } },
+    snd: { ...T909, kick: ['khard', 'khard', 'kind', 'kpunch'], clap: ['c909', 'cind', 'csnare'], hat: ['hmetal', 'h909'], ohat: ['o909', 'oride'], bass: ['breese', 'breese', 'broll'], stab: ['srave', 'srave', 'spluck'], lead: ['lsaw', 'lsquare'] } },
+  witch: { pat: { kick: { trap: 3, half: 1 }, clap: { slow: 1 }, hat: { trap: 1 }, ohat: { sparse: 1 }, perc: { sparse: 1 }, bass: { 808: 1 }, stab: { pad: 1 }, lead: { slow: 1 } },
+    snd: { kick: ['kboom', 'kboom', 'k808'], clap: ['ctrap', 'ctrap', 'c808'], hat: ['htrap', 'htrap', 'h808'], ohat: ['o808', 'onoise'], perc: ['pchime', 'pchime', 'pblip'], bass: ['b808', 'b808', 'bsub'], stab: ['schoir', 'schoir', 'spad'], lead: ['lghost', 'lghost', 'lbell'] } },
+};
+POOL.techno = POOL.peak;
+const wp = o => { const e = Object.entries(o); let x = rnd() * e.reduce((a, [, w]) => a + w, 0); for (const [k, w] of e) if ((x -= w) < 0) return k; return e[0][0]; };
+
+// Свежие партии и звуки под жанр. ids — какие дорожки (по умолчанию все непустые).
+// Не трогает то, что человек напел или поправил руками.
+export function freshParts(st, genre, ids = null) {
+  const P = POOL[genre] || POOL.peak;
+  for (const t of TRACKS) {
+    const tr = st.tracks[t.id];
+    if (t.id === 'vox' || (ids ? !ids.includes(t.id) : isEmpty(tr)) || tr.hand || tr.variant === 'voice') continue;
+    const v = P.pat[t.id] ? wp(P.pat[t.id]) : tr.variant || defaultVariant(t.id, genre);
+    tr.steps = makePattern(t.id, v, st.scale);
+    tr.variant = v;
+    const sl = P.snd[t.id];
+    let sid = sl ? pick(sl) : null;
+    // Живые ударные из FL Studio (если «Пульс» запущен на компьютере с FL) — примерно в трети случаев
+    if (FL.ready && rnd() < 0.35) { const c = flCandidates(t.id, genre); if (c.length) sid = flSound(t.id, pick(c).id) || sid; }
+    if (sid) { tr.sound = sid; tr.p = soundParams(t.id, sid, tr.p); }
+  }
+  // Характер в пределах звука: бочка чуть выше или ниже, короче или длиннее; бас ярче или темнее
+  const k = st.tracks.kick.p, b = st.tracks.bass.p, r = (a, z) => a + (z - a) * rnd();
+  if (k.tune) k.tune = Math.round(k.tune * r(0.9, 1.12));
+  if (k.decay) k.decay = +(k.decay * r(0.85, 1.2)).toFixed(3);
+  if (b.cutoff) b.cutoff = Math.round(b.cutoff * r(0.8, 1.25));
+  return st;
+}
+
 export function genreState(state, id) {
   const g = GENRES[id];
   const st = structuredClone(state);
@@ -482,7 +569,11 @@ export function genreState(state, id) {
     const v = g.pat[t.id];
     tr.steps = v ? makePattern(t.id, v, st.scale) : emptySteps(t.id);
     tr.variant = v || null;
+    delete tr.hand;
   }
+  // Каждый раз свой бит: рисунки и звуки из того, что подходит жанру
+  freshParts(st, id, Object.keys(g.pat));
+  for (const t of TRACKS) if (g.p && g.p[t.id]) Object.assign(st.tracks[t.id].p, structuredClone(g.p[t.id]));
   // Гармония жанра: бас, аккорды и мелодия сразу ходят по аккордам
   const prog = pick(GENRE_PROGS[id] || ['none']);
   st.harm = { prog, per: PROGS[prog].d.length === 2 ? pick([1, 2]) : pick([1, 1, 2]), auto: true };

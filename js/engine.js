@@ -1,9 +1,11 @@
 // Звуковой движок: синтез всех инструментов в Web Audio, секвенсор с упреждением,
 // эффекты (реверб, эхо, румбл, сайдчейн), проигрывание трека по частям, запись в WAV.
-import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=4';
+import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=5';
+import { SOUNDS } from './sounds.js?v=5';
+import { voxBuffer, voxFetch, voxInfo, voxRotate } from './vox.js?v=5';
 
 const dbToGain = v => 10 ** (v / 20);
-const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34 };
+const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34, vox: 0.62 };
 const LOOKAHEAD = 0.12;
 const CHORDS = { seventh: [0, 2, 4, 6], triad: [0, 2, 4], fifth: [0, 4, 7], sus: [0, 3, 4] };
 
@@ -28,6 +30,8 @@ export class Engine {
     this.cur = null;
     // Гармония петли: harmFn(такт, шаг) — на сколько ступеней лада сдвинуть бас, аккорды и мелодию.
     this.harmFn = null;
+    // Рисунок петли: loopFn(дорожка, такт) — шаги выбранного рисунка A/B/C.
+    this.loopFn = null;
     this.onStep = null;
     this.onKick = null;
     this.onBuildEnd = null;
@@ -121,7 +125,8 @@ export class Engine {
     this.throwR = {};
     for (const t of TRACKS) {
       const c = G(1), a = G(1);
-      c.connect(a).connect(t.kind === 'drum' ? this.drums : this.duck);
+      // Голос не приседает под бочку — идёт прямо в сумму
+      c.connect(a).connect(t.kind === 'drum' ? this.drums : t.kind === 'vox' ? this.mix : this.duck);
       const r = G(0), d = G(0);
       a.connect(r).connect(this.revIn);
       a.connect(d).connect(this.dlyIn);
@@ -321,6 +326,7 @@ export class Engine {
       else if (fx.type === 'stutter') this.stutter(at, end, sd / 2);
       else if (fx.type === 'throw') this.throwFx(fx.kind, at, sd * 4, bd);
       else if (fx.type === 'stop') this.powerDown(at, end - at);
+      else if (fx.type === 'flfx') this.flFx(fx, t0, sd, bd);
     }
     this.onSongBar?.(this.songPos, t0);
     this.songPos++;
@@ -346,11 +352,22 @@ export class Engine {
       if (T.mute || (anySolo && !T.solo)) continue;
       if (take && take.mute.includes(tr.id)) continue;
       if (b && prog > 0.875 && (tr.id === 'kick' || tr.id === 'bass')) continue;
-      const steps = cur ? cur.steps[tr.id] : T.steps;
+      // В петле рисунок может быть B или C (кнопки A/B/C) — его даёт loopFn
+      const steps = cur ? cur.steps[tr.id] : this.loopFn ? this.loopFn(tr.id, this.bar) : T.steps;
       if (!steps) continue;
       if (tr.kind === 'drum') {
         const v = steps[s];
         if (v) this.hit(tr.id, t, v, T.p, s);
+      } else if (tr.kind === 'vox') {
+        let x = steps[s];
+        if (!x) continue;
+        if (!cur) {
+          // В петле голос звучит раз в несколько тактов, и фразы по кругу меняются
+          const o = T.vox || {}, ev = o.every || 1;
+          if (this.bar % ev) continue;
+          x = voxRotate(x, o, Math.floor(this.bar / ev));
+        }
+        this.voxNote(t, x, T.p, sd);
       } else {
         let n = steps[s];
         if (!n) continue;
@@ -367,11 +384,52 @@ export class Engine {
 
   // ——— Ударные ———
   hit(id, t, v, p, s) {
+    if (p.sample) return this.sampleHit(id, t, v, p);
     if (id === 'kick') this.kick(t, v, p);
     else if (id === 'clap') this.clap(t, v, p);
     else if (id === 'hat') this.hat(t, v, p, false);
     else if (id === 'ohat') this.hat(t, v, p, true);
     else if (id === 'perc') this.perc(t, v, p, s);
+  }
+
+  // Живой удар из FL Studio. «Короче/длиннее» — затухание, «выше/ниже» у бочки — скорость сэмпла.
+  sampleHit(id, t, v, p) {
+    const buf = voxBuffer(p.sample);
+    if (!buf) { voxFetch([p.sample]); return; }
+    const ctx = this.ctx, src = ctx.createBufferSource(), g = this.G(0);
+    src.buffer = buf;
+    const rate = p.tune0 && p.tune ? Math.min(2, Math.max(0.5, p.tune / p.tune0)) : 1;
+    src.playbackRate.value = rate;
+    const len = Math.min(buf.duration / rate, Math.max(0.05, (p.decay || 0.3) * (id === 'kick' || id === 'ohat' ? 3 : 4)));
+    g.gain.setValueAtTime(v * (p.gain || 1) * 1.15, t);
+    g.gain.setTargetAtTime(0, t + len * 0.75, len * 0.12);
+    src.connect(g);
+    if (id === 'kick') { g.connect(this.kickShaper); g.connect(this.rumbleIn); } else g.connect(this.ch[id]);
+    src.start(t);
+    src.stop(t + len + 0.1);
+    if (id === 'kick') {
+      this.duckAt(this.duck.gain, t, 0.55);
+      this.duckAt(this.rumbleDuck.gain, t, 0.95);
+      this.onKick?.(t);
+    } else if (id === 'ohat') this.lastOpen = g;
+    else if (id === 'hat' && this.lastOpen) {
+      const prm = this.lastOpen.gain;
+      if (prm.cancelAndHoldAtTime) prm.cancelAndHoldAtTime(t); else prm.cancelScheduledValues(t);
+      prm.setTargetAtTime(0, t, 0.008);
+      this.lastOpen = null;
+    }
+  }
+
+  // Звуковой эффект FL на переходе: райзер заканчивается ровно к концу окна (end — в тактах от начала такта)
+  flFx(fx, t0, sd, bd) {
+    const buf = voxBuffer(fx.id);
+    if (!buf) { voxFetch([fx.id]); return; }
+    let at = t0 + (fx.at || 0) * sd;
+    if (fx.end != null) at = Math.max(at, t0 + fx.end * bd - buf.duration);
+    const src = this.ctx.createBufferSource(), g = this.G(fx.vol ?? 0.8);
+    src.buffer = buf;
+    src.connect(g).connect(this.fxBus);
+    src.start(at);
   }
 
   noiseSrc(t, dur) {
@@ -612,10 +670,90 @@ export class Engine {
     flt.connect(g).connect(this.ch.lead);
   }
 
-  // Прослушать звук дорожки прямо сейчас (при выборе звука или ноты).
+  // ——— Голос: адлиб с обработкой ———
+  // x: { a — фраза, v — громкость, fx — своя обработка, c — слог для нарезки, len — длина слога в шагах }
+  voxNote(t, x, p, sd) {
+    const P = x.fx && SOUNDS.vox[x.fx] ? { ...p, ...SOUNDS.vox[x.fx].p, rev: p.rev, dly: p.dly } : p;
+    const buf = voxBuffer(x.a, !!P.back);
+    if (!buf) { voxFetch([x.a]); return; } // ещё не загружена — прозвучит в следующий раз
+    const ctx = this.ctx, info = voxInfo(x.a) || { on: [0] }, rate = 2 ** ((P.pitch || 0) / 12);
+    // Голос один: новая фраза обрывает предыдущую
+    if (this.voxVca) { const g = this.voxVca.gain; g.cancelScheduledValues(t); g.setTargetAtTime(0, t, 0.006); }
+    const vca = this.G(0), hp = this.F('highpass', P.hp || 120), lp = this.F('lowpass', P.lp || 14000, P.q || 0.7);
+    this.voxVca = vca;
+    hp.connect(lp);
+    let tail = lp;
+    const nodes = [vca, hp, lp];
+    if (P.drive) { const sh = ctx.createWaveShaper(); sh.curve = this.curve(P.drive); tail.connect(sh); tail = sh; nodes.push(sh); }
+    let ring = null;
+    if (P.ring) { // кольцевая модуляция — металлический «робот»
+      const rg = this.G(0);
+      ring = ctx.createOscillator();
+      ring.frequency.value = P.ring;
+      ring.connect(rg.gain);
+      tail.connect(rg);
+      tail = rg;
+      nodes.push(rg, ring);
+    }
+    tail.connect(vca).connect(this.ch.vox);
+    const v = x.v ?? 1, full = buf.duration / rate;
+    const play = (at, off, dur) => {
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = rate;
+      src.connect(hp);
+      src.start(at, off, dur * rate);
+      nodes.push(src);
+      return src;
+    };
+    let end;
+    if (x.c != null) {
+      // Нарезка: один слог фразы на сетке
+      const on = info.on, k = x.c % on.length, off = on[k] / 1000;
+      const nxt = k + 1 < on.length ? on[k + 1] / 1000 : buf.duration;
+      const dur = Math.min(sd * (x.len || 1) * 0.92, (nxt - off) / rate + 0.03);
+      play(t, P.back ? Math.max(0, buf.duration - nxt) : off, dur);
+      end = t + dur;
+    } else {
+      let at = t;
+      if (P.stut) { // заикание: начало фразы повторяется шестнадцатыми
+        const piece = Math.min(sd * 0.85, ((info.on[1] || 160) / 1000) / rate);
+        for (let k = 0; k < P.stut; k++, at += sd) play(at, 0, piece);
+      }
+      const dur = Math.min(full, sd * 16 * 3);
+      play(at, 0, dur);
+      end = at + dur;
+    }
+    const g = vca.gain;
+    g.setValueAtTime(0, t);
+    g.linearRampToValueAtTime(v, t + 0.004);
+    if (P.gate) for (let k = 1, a = t + sd * 0.5; a < end; k++, a = t + sd * (k - 0.5)) {
+      g.setTargetAtTime(0.05 * v, a, 0.004);
+      g.setTargetAtTime(v, t + sd * k, 0.002);
+    }
+    g.setTargetAtTime(0, end, 0.015);
+    if (ring) { ring.start(t); ring.stop(end + 0.2); }
+    // Обработка части трека: свой «бросок» в реверб или эхо
+    if (x.fx && SOUNDS.vox[x.fx]) {
+      const fp = SOUNDS.vox[x.fx].p;
+      for (const [send, lvl] of [[this.throwR.vox, fp.rev - p.rev], [this.throwD.vox, fp.dly - p.dly]]) {
+        if (!(lvl > 0.05)) continue;
+        send.gain.setTargetAtTime(lvl, t, 0.01);
+        send.gain.setTargetAtTime(0, end, 0.05);
+      }
+    }
+    if (!this.offline) setTimeout(() => nodes.forEach(n => n.disconnect()), (end - ctx.currentTime + 1.5) * 1000);
+  }
+
+  // Прослушать звук дорожки прямо сейчас (при выборе звука или ноты). У голоса n — фраза.
   preview(id, n = 0) {
     if (!this.ctx) return;
     const st = this.getState(), T = st.tracks[id], t = this.ctx.currentTime + 0.02, sd = 60 / st.bpm / 4;
+    if (id === 'vox') {
+      const a = typeof n === 'string' ? n : (T.steps.find(Boolean) || {}).a || (T.vox.pool || [])[0];
+      if (a) voxFetch([a]).then(() => this.voxNote(this.ctx.currentTime + 0.02, { a }, T.p, sd));
+      return;
+    }
     if (TRACK[id].kind === 'drum') this.hit(id, t, 0.9, T.p, 0);
     else if (id === 'bass') this.bassNote(t, baseMidi(st.key, 'bass') + n, false, false, sd * 2, false, T.p);
     else if (id === 'stab') this.stab(t, { n, len: 2 }, T.p, st, sd);

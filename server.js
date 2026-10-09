@@ -11,9 +11,9 @@ const ROOT = __dirname;
 const URL_ = `http://${HOST}:${PORT}/`;
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.wav': 'audio/wav',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.wav': 'audio/wav', '.mp3': 'audio/mpeg',
 };
-const SERVED = new Set(['.html', '.js', '.css', '.svg', '.png', '.ico', '.json', '.wav']);
+const SERVED = new Set(['.html', '.js', '.css', '.svg', '.png', '.ico', '.json', '.wav', '.mp3']);
 
 function openBrowser() {
   if (process.argv.includes('--no-browser')) return;
