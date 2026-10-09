@@ -1,5 +1,5 @@
 // Музыкальная часть «Пульса»: лады, дорожки, паттерны, генераторы и жанры.
-import { SOUNDS, KITS } from './sounds.js?v=3';
+import { SOUNDS, KITS } from './sounds.js?v=4';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const NOTE_RU = ['До', 'До-диез', 'Ре', 'Ми-бемоль', 'Ми', 'Фа', 'Фа-диез', 'Соль', 'Соль-диез', 'Ля', 'Си-бемоль', 'Си'];
@@ -32,6 +32,67 @@ export function semiToDeg(n, scale) {
 
 export const snap = (n, scale) => deg(scale, semiToDeg(n, scale));
 export const noteName = (key, n) => NOTE_NAMES[(((key + n) % 12) + 12) % 12];
+const NOTE_SHORT = ['До', 'До♯', 'Ре', 'Ми♭', 'Ми', 'Фа', 'Фа♯', 'Соль', 'Ля♭', 'Ля', 'Си♭', 'Си'];
+
+// ——— Гармония ———
+// Аккорд — ступень лада, на которую сдвигаются бас, аккорды и мелодия: 0 — тоника, -2 — шестая ступень снизу, 3 — четвёртая сверху.
+// Ступени выбраны так, чтобы бас ходил рядом с тоникой, а не прыгал через октаву. per — тактов на аккорд по умолчанию.
+export const PROGS = {
+  none: { name: 'На месте', d: [0] },
+  'i-VI': { name: 'i–VI', d: [0, -2], per: 2 },
+  'i-VII': { name: 'i–VII', d: [0, -1], per: 2 },
+  'i-iv': { name: 'i–iv', d: [0, 3], per: 2 },
+  'i-v': { name: 'i–v', d: [0, -3], per: 2 },
+  'i-II': { name: 'i–II', d: [0, 1], per: 2 },
+  'i-VI-III-VII': { name: 'i–VI–III–VII', d: [0, -2, 2, -1] },
+  'i-iv-VI-v': { name: 'i–iv–VI–v', d: [0, 3, -2, -3] },
+  'i-VII-VI-VII': { name: 'i–VII–VI–VII', d: [0, -1, -2, -1] },
+  'i-VII-VI-v': { name: 'i–VII–VI–v', d: [0, -1, -2, -3] },
+  'i-i-VI-VII': { name: 'i–i–VI–VII', d: [0, 0, -2, -1] },
+  'VI-VII-i-i': { name: 'VI–VII–i–i', d: [-2, -1, 0, 0] },
+  'i-III-VII-iv': { name: 'i–III–VII–iv', d: [0, 2, -1, 3] },
+  'i-iv-VII-III': { name: 'i–iv–VII–III', d: [0, 3, -1, 2] },
+  'i-VI-iv-VII': { name: 'i–VI–iv–VII', d: [0, -2, 3, -1] },
+  'i-II-i-VII': { name: 'i–II–i–VII', d: [0, 1, 0, -1] },
+  'i-iv-i-v': { name: 'i–iv–i–v', d: [0, 3, 0, -3] },
+  'i-v-VI-III': { name: 'i–v–VI–III', d: [0, -3, -2, 2] },
+  'i-VI-III-VII-8': { name: 'i–VI–III–VII · i–VI–iv–v', d: [0, -2, 2, -1, 0, -2, 3, -3] },
+  'i-v-VI-III-8': { name: 'i–v–VI–III · iv–i–iv–v', d: [0, -3, -2, 2, 3, 0, 3, -3] },
+  climb: { name: 'Лестница вверх', d: [0, 1, 2, 3] },
+};
+export const PERS = { 0.5: '½ такта', 1: '1 такт', 2: '2 такта', 4: '4 такта' };
+
+// Круги аккордов, которые подходят жанру (по ним сочиняется трек и выбирается «другая прогрессия»).
+export const GENRE_PROGS = {
+  techno: ['i-VI', 'i-VII', 'i-VI-III-VII', 'i-VII-VI-VII', 'i-i-VI-VII', 'i-VII-VI-v', 'i-iv', 'i-III-VII-iv', 'i-VI-iv-VII'],
+  acid: ['i-VII', 'i-iv', 'i-II', 'i-VII-VI-VII', 'i-i-VI-VII', 'i-II-i-VII', 'i-v'],
+  minimal: ['none', 'i-VII', 'i-iv', 'i-v', 'i-II'],
+  dub: ['i-iv', 'i-VII', 'i-v', 'i-iv-i-v', 'i-VI'],
+  detroit: ['i-VI-III-VII', 'i-iv-VII-III', 'i-iv-VI-v', 'i-VII-VI-VII', 'i-VI-III-VII-8', 'i-III-VII-iv'],
+  melodic: ['i-VI-III-VII', 'i-iv-VI-v', 'i-VI-iv-VII', 'i-VII-VI-v', 'VI-VII-i-i', 'i-VI-III-VII-8', 'i-v-VI-III-8', 'i-v-VI-III'],
+  hypnotic: ['none', 'i-VII', 'i-II', 'i-VI', 'i-II-i-VII'],
+  industrial: ['i-II', 'i-VII', 'i-II-i-VII', 'i-VI', 'i-v'],
+  hard: ['i-VI', 'i-VII-VI-v', 'i-II-i-VII', 'i-i-VI-VII', 'VI-VII-i-i', 'i-VI-III-VII'],
+  witch: ['i-VI', 'i-II', 'i-VII-VI-VII', 'i-II-i-VII', 'i-VII-VI-v'],
+  house: ['i-iv', 'i-VII-VI-VII', 'i-iv-VII-III', 'i-VI-III-VII', 'i-v-VI-III', 'i-iv-i-v', 'i-VI-iv-VII'],
+};
+GENRE_PROGS.peak = GENRE_PROGS.techno;
+
+// Названия аккордов нотами: «Ля – Фа – До – Соль».
+export const progChords = (id, key, scale) => (PROGS[id] || PROGS.none).d.map(d => NOTE_SHORT[(((key + deg(scale, d)) % 12) + 12) % 12]);
+
+// На сколько ступеней сдвинуты ноты в шаге s такта bar (такт считается от начала части или петли).
+export function harmShift(prog, per, bar, s) {
+  const pr = PROGS[prog];
+  if (!pr || pr.d.length < 2) return 0;
+  return pr.d[Math.floor((bar * 16 + s) / ((per || pr.per || 1) * 16)) % pr.d.length];
+}
+// Номер аккорда, который звучит в шаге s такта bar.
+export function harmIndex(prog, per, bar, s) {
+  const pr = PROGS[prog];
+  if (!pr || pr.d.length < 2) return 0;
+  return Math.floor((bar * 16 + s) / ((per || pr.per || 1) * 16)) % pr.d.length;
+}
 
 // Тоника дорожки в MIDI: бас около C2, аккорды и мелодия на две октавы выше.
 export function baseMidi(key, id) {
@@ -82,6 +143,7 @@ export function emptyState() {
     master: { vol: 0, cut: 20000, rumble: 0, delay: 0.55, reverb: 0.55 },
     tracks,
     mode: 'loop', song: null, songMin: 3,
+    harm: { prog: 'none', per: 1, auto: true }, // гармония петли; auto — выбрана жанром, а не человеком
   };
 }
 
@@ -100,6 +162,8 @@ export function fixState(s) {
   }
   if (!out.song || !Array.isArray(out.song.sections) || !out.song.sections.length) out.song = null;
   if (out.mode !== 'song' || !out.song) out.mode = 'loop';
+  const h = s.harm || {};
+  out.harm = { prog: PROGS[h.prog] ? h.prog : 'none', per: PERS[h.per] ? +h.per : 1, auto: h.auto !== false };
   out.songMin = Math.min(5, Math.max(1, Math.round((+out.songMin || 3) * 2) / 2));
   return out;
 }
@@ -157,6 +221,7 @@ export const VARIANT_RU = {
   acid: 'кислотный 303', rolling: 'катящийся', deep: 'глубокий', offbeat: 'на офбит',
   dub: 'даб с эхом', chords: 'ритмичные', arp: 'арпеджио', melody: 'новая линия',
   trap: 'трэп-халфтайм', slow: 'медленная, на третью долю', 808: 'гудящий 808 с глайдами', pad: 'длинные мрачные аккорды',
+  house: 'хаус-бас с октавами',
 };
 
 export const VARIANTS = {
@@ -165,15 +230,15 @@ export const VARIANTS = {
   hat: ['off', 'eight', 'six', 'gallop', 'sparse', 'trap'],
   ohat: ['off', 'sparse'],
   perc: ['three', 'sync', 'sparse'],
-  bass: ['acid', 'rolling', 'deep', 'offbeat', '808'],
+  bass: ['acid', 'rolling', 'deep', 'offbeat', '808', 'house'],
   stab: ['dub', 'chords', 'sparse', 'pad'],
   lead: ['arp', 'melody', 'slow'],
 };
 
 export function defaultVariant(id, genre) {
   if (genre === 'witch') return { kick: 'trap', clap: 'slow', hat: 'trap', ohat: 'sparse', perc: 'sparse', bass: '808', stab: 'pad', lead: 'slow' }[id];
-  if (id === 'bass') return genre === 'acid' ? 'acid' : genre === 'dub' || genre === 'minimal' ? 'deep' : 'rolling';
-  if (id === 'stab') return genre === 'detroit' ? 'chords' : genre === 'melodic' ? 'pad' : 'dub';
+  if (id === 'bass') return genre === 'acid' ? 'acid' : genre === 'dub' || genre === 'minimal' ? 'deep' : genre === 'house' ? 'house' : 'rolling';
+  if (id === 'stab') return genre === 'detroit' || genre === 'house' ? 'chords' : genre === 'melodic' ? 'pad' : 'dub';
   if (id === 'lead') return genre === 'melodic' ? 'melody' : 'arp';
   return { kick: 'four', clap: 'back', hat: 'off', ohat: 'off', perc: 'gen' }[id];
 }
@@ -201,8 +266,18 @@ function genBass(v, scale) {
     s[0] = N(0, { acc: true });
   } else if (v === 'rolling') {
     for (const i of [2, 3, 6, 7, 10, 11, 14, 15]) s[i] = N(0, { acc: i % 4 === 2 });
-    if (rnd() < 0.7) s[15] = N(pick([deg(scale, 4), 12, deg(scale, -1)]));
-    if (rnd() < 0.4) s[11] = N(pick([12, deg(scale, 2)]));
+    // Не одна нота по кругу: вторая шестнадцатая в паре иногда уходит на октаву, квинту или септиму
+    const moves = shuffle([3, 7, 11, 15]).slice(0, 1 + Math.floor(rnd() * 3));
+    for (const i of moves) s[i] = N(deg(scale, pick([7, 7, 4, -1, 2, -3])));
+  } else if (v === 'house') {
+    // Хаус: офбиты с прыжками на октаву и подходом к следующей доле
+    const shape = pick([
+      [[2, 0], [3, 7], [6, 0], [10, 0], [11, 7], [14, 4]],
+      [[2, 0], [6, 7], [10, 0], [13, 2], [14, 4]],
+      [[2, 0], [5, 0], [6, 7], [10, 0], [14, 6], [15, 7]],
+      [[0, 0], [2, 7], [6, 0], [8, 0], [10, 7], [13, 4], [14, 6]],
+    ]);
+    for (const [i, d] of shape) s[i] = N(deg(scale, d), { acc: i % 4 === 2 });
   } else if (v === 'deep') {
     for (const i of [2, 6, 10, 14]) s[i] = N(0, { len: 2 });
     if (rnd() < 0.6) s[14] = N(deg(scale, pick([4, -3, 2])), { len: 2 });
@@ -369,6 +444,11 @@ export const GENRES = {
     pat: { kick: 'four', hat: 'six', perc: 'three', ohat: 'sparse' },
     p: { perc: { dly: 0.4, rev: 0.3 }, hat: { vol: -8 } },
   },
+  house: {
+    name: 'Хаус', bpm: 124, swing: 0.1, kit: 'house', feel: 'тёплые аккорды и шейкер',
+    pat: { kick: 'four', clap: 'back', hat: 'six', ohat: 'off', perc: 'sync', bass: 'house', stab: 'chords' },
+    p: { hat: { vol: -9 }, ohat: { vol: -8 }, stab: { dly: 0.22, rev: 0.3, vol: -6 } },
+  },
   hard: {
     name: 'Хард-техно', bpm: 150, rumble: 0.5, kit: 'hard',
     pat: { kick: 'four', clap: 'back', hat: 'six', ohat: 'off', bass: 'rolling' },
@@ -403,5 +483,8 @@ export function genreState(state, id) {
     tr.steps = v ? makePattern(t.id, v, st.scale) : emptySteps(t.id);
     tr.variant = v || null;
   }
+  // Гармония жанра: бас, аккорды и мелодия сразу ходят по аккордам
+  const prog = pick(GENRE_PROGS[id] || ['none']);
+  st.harm = { prog, per: PROGS[prog].d.length === 2 ? pick([1, 2]) : pick([1, 1, 2]), auto: true };
   return st;
 }

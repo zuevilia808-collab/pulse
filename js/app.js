@@ -2,14 +2,15 @@
 import {
   TRACKS, TRACK, emptyState, fixState, keyLabel, noteName, isEmpty, makePattern, denser, sparser, genreState,
   GENRES, GENRE_IDS, defaultVariant, VARIANT_RU, VARIANTS, emptySteps, NOTE_RU, SCALE_RU, snap, covered, semiToDeg, deg, pick, soundParams,
-} from './music.js?v=3';
-import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=3';
-import { PART, INS, OUTS, FILTERS, PROGS, HEADS, SHAPES, FORMS, LANES, compose, rerollSection, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=3';
-import { Engine, renderSong } from './engine.js?v=3';
-import { parse, normalize, QUICK } from './commands.js?v=3';
-import { Voice } from './voice.js?v=3';
-import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=3';
-import { Viz } from './viz.js?v=3';
+  PROGS, GENRE_PROGS, progChords, harmShift, harmIndex,
+} from './music.js?v=4';
+import { SOUNDS, KITS, KIT_IDS, kitOf } from './sounds.js?v=4';
+import { PART, INS, OUTS, FILTERS, HEADS, SHAPES, FORMS, LANES, compose, rerollSection, makePerf, barData, songBars, locate, sectionStart, energy, barSec } from './arrange.js?v=4';
+import { Engine, renderSong } from './engine.js?v=4';
+import { parse, normalize, QUICK } from './commands.js?v=4';
+import { Voice } from './voice.js?v=4';
+import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=4';
+import { Viz } from './viz.js?v=4';
 
 const STORE = 'pulse.state.v1';
 const $ = s => document.querySelector(s);
@@ -44,6 +45,7 @@ const stepQ = [], songQ = [];
 const rows = {};
 let playhead = -1, songAt = -1;
 let bank = 0; // какой рисунок показывает секвенсор: 0 — A (основной), 1 — B, 2 — C
+let curBar = 0; // такт петли, который сейчас звучит (для подсветки аккорда)
 const pendingMute = new Set(); // «убери» ждёт начала доли; «верни» до этого момента его отменяет
 
 // ——— Хранение и отмена ———
@@ -167,6 +169,31 @@ function composeSong(minutes, seed) {
   return `Вариант №${sd} · форма «${FORMS[song.form].name}» · ${fmtTime(songBars(song) * barSec(state.bpm))}: ${path.join(' → ')}`;
 }
 
+// ——— Гармония: бас, аккорды и мелодия идут по кругу аккордов ———
+const PER_LBL = { 0.5: 'каждые ½ такта', 1: 'каждый такт', 2: 'каждые 2 такта', 4: 'каждые 4 такта' };
+const PER_ORDER = [0.5, 1, 2, 4];
+const chordLine = (prog, sep = ' → ') => progChords(prog, state.key, state.scale).join(sep);
+function harmSay() {
+  const h = state.harm;
+  if (h.prog === 'none') return 'Гармония на месте: бас, аккорды и мелодия не меняют аккорд';
+  return `Гармония: ${chordLine(h.prog)}, смена ${PER_LBL[h.per]}`;
+}
+function nextProg() {
+  const h = state.harm, list = (GENRE_PROGS[state.genre] || GENRE_PROGS.techno).filter(x => x !== 'none' && x !== h.prog);
+  h.prog = pick(list.length ? list : Object.keys(PROGS).filter(x => x !== 'none' && x !== 'climb' && x !== h.prog));
+  if (PROGS[h.prog].d.length > 4 && h.per > 2) h.per = 1;
+  h.auto = false;
+}
+// Гармония, которая звучит сейчас: у петли — своя, в треке — у текущей части.
+function harmNow() {
+  if (state.mode === 'song' && state.song) {
+    const L = engine.playing && songAt >= 0 ? locate(state.song, songAt) : null;
+    const s = L ? L.s : state.song.sections[0];
+    return { prog: s.prog || 'none', per: s.per || (PROGS[s.prog] || PROGS.none).per || 1, bar: L ? L.j : 0, song: true, i: L ? L.i : 0 };
+  }
+  return { prog: state.harm.prog, per: state.harm.per, bar: curBar, song: false };
+}
+
 const heroLabel = h => (h && h.id !== 'none' ? `${NAME[h.id]} · ${SHAPES[h.shape]}` : 'нет');
 const stepsOf = id => (bank && state.song && state.song.alt && state.song.alt[id] && state.song.alt[id][bank - 1]) || state.tracks[id].steps;
 
@@ -251,6 +278,19 @@ async function exec(a) {
       return `${g.name} · ${g.bpm} BPM${g.feel ? ` (${g.feel})` : ''} · звуки «${KITS[g.kit].name}»`;
     }
     case 'song': return composeSong(a.minutes, a.reroll ? null : a.seed);
+    case 'harm': {
+      const h = state.harm;
+      if (a.prog === 'none') { h.prog = 'none'; h.auto = false; return harmSay(); }
+      if (a.per) {
+        if (h.prog === 'none') nextProg();
+        h.per = PER_ORDER[clamp(PER_ORDER.indexOf(h.per) + (a.per > 0 ? 1 : -1), 0, PER_ORDER.length - 1)];
+        h.auto = false;
+        return harmSay();
+      }
+      nextProg();
+      if (['bass', 'stab', 'lead'].every(id => isEmpty(T[id]))) return harmSay() + ' · но бас, аккорды и мелодия пока пустые — скажи «добавь бас»';
+      return harmSay() + (song ? ' · станет главной в следующем сочинении трека' : '');
+    }
     case 'mode': return setMode(a.mode);
     case 'seek':
       if (!state.song) return 'Трек ещё не сочинён — скажи «напиши трек»';
@@ -759,17 +799,25 @@ async function stopRec() {
 }
 
 // ——— Интерфейс ———
+const hzS = v => (v >= 1000 ? (v / 1000).toFixed(1) + 'к' : String(Math.round(v)));
+const pctS = v => String(Math.round(v * 100));
+const dbS = v => (v > 0 ? '+' : '') + Math.round(v);
 const KNOBS = [
-  { label: 'Фильтр баса', get: () => state.tracks.bass.p.cutoff, set: v => { state.tracks.bass.p.cutoff = v; }, min: 60, max: 4000, log: true, fmt: hz },
-  { label: 'Кислота', get: () => state.tracks.bass.p.res, set: v => { state.tracks.bass.p.res = v; }, min: 1, max: 24, fmt: v => String(Math.round(v)) },
-  { label: 'Перегруз бочки', get: () => state.tracks.kick.p.drive, set: v => { state.tracks.kick.p.drive = v; }, min: 0, max: 1, fmt: pct },
-  { label: 'Румбл', get: () => state.master.rumble, set: v => { state.master.rumble = v; }, min: 0, max: 1, fmt: pct },
-  { label: 'Эхо', get: () => state.master.delay, set: v => { state.master.delay = v; }, min: 0, max: 1.2, fmt: v => pct(v / 1.2) },
-  { label: 'Реверб', get: () => state.master.reverb, set: v => { state.master.reverb = v; }, min: 0, max: 1.2, fmt: v => pct(v / 1.2) },
-  { label: 'Свинг', get: () => state.swing, set: v => { state.swing = v; }, min: 0, max: 0.6, fmt: pct },
-  { label: 'Общий фильтр', get: () => state.master.cut, set: v => { state.master.cut = v; }, min: 250, max: 20000, log: true, fmt: v => (v >= 19500 ? 'открыт' : hz(v)) },
-  { label: 'Громкость', get: () => state.master.vol, set: v => { state.master.vol = v; }, min: -30, max: 6, fmt: dbs },
+  { label: 'Фильтр баса', short: 'Фильтр<br>баса', get: () => state.tracks.bass.p.cutoff, set: v => { state.tracks.bass.p.cutoff = v; }, min: 60, max: 4000, log: true, fmt: hz, short_fmt: hzS },
+  { label: 'Кислота', short: 'Кисло&shy;та', get: () => state.tracks.bass.p.res, set: v => { state.tracks.bass.p.res = v; }, min: 1, max: 24, fmt: v => String(Math.round(v)) },
+  { label: 'Перегруз бочки', short: 'Драйв<br>бочки', get: () => state.tracks.kick.p.drive, set: v => { state.tracks.kick.p.drive = v; }, min: 0, max: 1, fmt: pct, short_fmt: pctS },
+  { label: 'Румбл', get: () => state.master.rumble, set: v => { state.master.rumble = v; }, min: 0, max: 1, fmt: pct, short_fmt: pctS },
+  { label: 'Эхо', get: () => state.master.delay, set: v => { state.master.delay = v; }, min: 0, max: 1.2, fmt: v => pct(v / 1.2), short_fmt: v => pctS(v / 1.2) },
+  { label: 'Реверб', get: () => state.master.reverb, set: v => { state.master.reverb = v; }, min: 0, max: 1.2, fmt: v => pct(v / 1.2), short_fmt: v => pctS(v / 1.2) },
+  { label: 'Свинг', get: () => state.swing, set: v => { state.swing = v; }, min: 0, max: 0.6, fmt: pct, short_fmt: pctS },
+  { label: 'Общий фильтр', short: 'Фильтр<br>всего', get: () => state.master.cut, set: v => { state.master.cut = v; }, min: 250, max: 20000, log: true, fmt: v => (v >= 19500 ? 'открыт' : hz(v)), short_fmt: v => (v >= 19500 ? 'откр' : hzS(v)) },
+  { label: 'Общая громкость', short: 'Мастер', get: () => state.master.vol, set: v => { state.master.vol = v; }, min: -30, max: 6, fmt: dbs, short_fmt: dbS },
 ];
+const FADER_NAME = { kick: 'Бочка', clap: 'Клэп', hat: 'Хэт', ohat: 'Откр.<br>хэт', perc: 'Перк.', bass: 'Бас', stab: 'Аккор&shy;ды', lead: 'Мело&shy;дия' };
+const CH_FADERS = TRACKS.map(t => ({
+  label: `Громкость: ${NAME[t.id].toLowerCase()}`, short: FADER_NAME[t.id], color: t.color,
+  get: () => state.tracks[t.id].p.vol, set: v => { state.tracks[t.id].p.vol = Math.round(v); }, min: -30, max: 8, fmt: dbs, short_fmt: dbS,
+}));
 const toPos = (k, v) => Math.round(1000 * (k.log ? Math.log(v / k.min) / Math.log(k.max / k.min) : (v - k.min) / (k.max - k.min)));
 const fromPos = (k, p) => (k.log ? k.min * (k.max / k.min) ** (p / 1000) : k.min + ((k.max - k.min) * p) / 1000);
 
@@ -792,16 +840,18 @@ const EXAMPLES = [
   'бочка 808', 'набор витч хаус', 'звуки 808', 'набор эсид', 'новый бас', 'новый ритм хэтов', 'дабовые аккорды', 'нарастание', 'брейк', 'дроп',
   'напою бас', 'битбокс', 'добавь румбл', 'только бас', 'верни всё', 'сделай минимал', 'придумай мелодию', 'тональность ре минор',
   'сделай эсид', 'добавь перкуссию', 'хард-техно', 'играй весь трек', 'мрачные аккорды', 'хэты трэп', 'сочини мелодик-техно', 'другой вариант', 'сочини хард-техно',
+  'сделай хаус', 'другая прогрессия', 'смена аккордов чаще', 'аккорды пиано', 'сочини хаус',
 ];
 
 const HELP = [
-  ['Начать', ['сделай техно', 'сделай эсид', 'сделай витч хаус', 'сделай минимал', 'сделай даб-техно', 'сделай индастриал', 'сделай гипнотик', 'хард-техно', 'детройт', 'поехали', 'стоп', 'новый трек']],
+  ['Начать', ['сделай техно', 'сделай хаус', 'сделай эсид', 'сделай витч хаус', 'сделай минимал', 'сделай даб-техно', 'сделай индастриал', 'сделай гипнотик', 'хард-техно', 'детройт', 'поехали', 'стоп', 'новый трек']],
   ['Трек целиком', ['напиши трек на 3 минуты', 'другой вариант', 'вариант 777', 'сочини витч хаус', 'сделай техно на 5 минут', 'трек на полторы минуты', 'играй весь трек', 'режим петли', 'с начала', 'брейк', 'дроп', 'сохрани']],
-  ['Звуки', ['другая бочка', 'другой клэп', 'другой хэт', 'другой открытый хэт', 'другая перкуссия', 'другой бас', 'другие аккорды', 'другой синт', 'бочка 808', 'клэп 909', 'бас 303', 'звук клэпа снейр', 'набор витч хаус', 'звуки 808', 'набор эсид', 'набор индастриал']],
+  ['Звуки', ['другая бочка', 'другой клэп', 'другой хэт', 'другой открытый хэт', 'другая перкуссия', 'другой бас', 'другие аккорды', 'другой синт', 'бочка 808', 'клэп 909', 'бас 303', 'аккорды пиано', 'звук клэпа снейр', 'набор витч хаус', 'набор хаус', 'звуки 808', 'набор эсид', 'набор индастриал']],
   ['Инструменты и рисунки', ['добавь бочку', 'ломаная бочка', 'хэты на офбит', 'частые хэты', 'хэты трэп', 'клэп на 2 и 4', 'добавь открытый хэт', 'добавь перкуссию', 'кислотный бас', 'глубокий бас', 'бас 808', 'дабовые аккорды', 'мрачные аккорды', 'придумай мелодию', 'добавь румбл', 'новый бас', 'новый ритм хэтов', 'новые аккорды']],
   ['Убрать и соло', ['убери бочку', 'верни бочку', 'только бас', 'только бочка и бас', 'соло хэт тоже', 'верни всё', 'убери всё кроме бочки', 'очисти хэты', 'больше хэтов', 'проще бас']],
   ['Звук', ['темп 135', 'быстрее', 'громче бас', 'тише хэты', 'открой фильтр', 'закрой фильтр на всём', 'больше кислоты', 'бочка жёстче', 'бочку длиннее', 'больше эха на аккордах', 'больше реверба', 'сухо', 'добавь свинг', 'бас на октаву выше']],
   ['Тональность', ['тональность ре минор', 'в фа диез миноре', 'транспонируй на тон выше']],
+  ['Гармония', ['другая прогрессия', 'добавь прогрессию', 'смена аккордов чаще', 'смена аккордов реже', 'без прогрессии']],
   ['Шоу', ['нарастание', 'брейк', 'дроп']],
   ['Голос вместо нот', ['напою бас', 'напою мелодию', 'напою аккорды', 'битбокс']],
   ['Ещё', ['отмени', 'начни запись', 'сохрани', 'метроном', 'бочка и бас громче']],
@@ -816,11 +866,10 @@ function buildUI() {
     row.dataset.id = t.id;
     row.style.setProperty('--c', t.color);
     row.innerHTML = `<div class="rh"><span class="dot"></span><button class="nm" title="Выбрать звук"><span>${t.name}</span><small></small></button>`
-      + '<button class="ms m" title="Выключить (mute)">M</button><button class="ms s" title="Соло — можно включить у нескольких">S</button>'
-      + '<input class="vol" type="range" min="-30" max="8" step="1" title="Громкость дорожки"></div>'
+      + '<button class="ms m" title="Выключить (mute)">M</button><button class="ms s" title="Соло — можно включить у нескольких">S</button></div>'
       + `<div class="cells">${'<button class="cell"></button>'.repeat(16)}</div>`;
     grid.append(row);
-    rows[t.id] = { row, cells: [...row.querySelectorAll('.cell')], m: row.querySelector('.m'), s: row.querySelector('.s'), vol: row.querySelector('.vol'), snd: row.querySelector('.nm small') };
+    rows[t.id] = { row, cells: [...row.querySelectorAll('.cell')], m: row.querySelector('.m'), s: row.querySelector('.s'), snd: row.querySelector('.nm small') };
   }
 
   $('#pairs').innerHTML = PAIRS.map((p, i) => `<div class="pair" data-i="${i}"><button class="pm" data-cmd="${p.minus}" aria-label="${p.minus}">−</button>`
@@ -829,24 +878,13 @@ function buildUI() {
   $('#kits').innerHTML = KIT_IDS.map(k => `<button class="kit" data-kit="${k}"><b>${KITS[k].name}</b><small>${KITS[k].desc}</small></button>`).join('');
   $('#voices').innerHTML = TRACKS.map(t => `<button class="vb" data-id="${t.id}" style="--c:${t.color}"><span class="dot"></span><span class="vt"><span class="vn">${t.name}</span><b></b></span><svg><use href="#i-down"/></svg></button>`).join('');
 
-  const knobs = $('#knobs');
-  knobs.innerHTML = '';
-  KNOBS.forEach(k => {
-    const el = document.createElement('label');
-    el.className = 'knob';
-    el.innerHTML = `<span class="kl">${k.label}</span><output></output><input type="range" min="0" max="1000">`;
-    const inp = el.querySelector('input');
-    inp.addEventListener('pointerdown', () => pushUndo());
-    inp.addEventListener('input', () => {
-      k.set(fromPos(k, +inp.value));
-      el.querySelector('output').textContent = k.fmt(k.get());
-      engine.applyParams();
-      save();
-      renderPairs();
-    });
-    k.el = el;
-    knobs.append(el);
-  });
+  const faders = (defs, box) => {
+    box.innerHTML = defs.map(k => `<div class="fd" tabindex="0" role="slider" aria-label="${k.label}" title="${k.label}" style="--c:${k.color || '#d4ff3a'}">`
+      + `<output></output><div class="ft"><i class="fl"></i><b class="fc"></b></div><span class="fn">${k.short || k.label}</span></div>`).join('');
+    [...box.children].forEach((el, i) => bindFader(el, defs[i]));
+  };
+  faders(CH_FADERS, $('#chFaders'));
+  faders(KNOBS, $('#mFaders'));
 
   const ks = $('#keySel'), ss = $('#scaleSel');
   ks.innerHTML = NOTE_RU.map((n, i) => `<option value="${i}">${n}</option>`).join('');
@@ -858,7 +896,7 @@ function buildUI() {
 }
 
 function refreshChips() {
-  const first = isAllEmpty() ? ['сделай техно', 'сделай витч хаус', 'напиши трек на 3 минуты'] : [];
+  const first = isAllEmpty() ? ['сделай техно', 'сделай хаус', 'напиши трек на 3 минуты'] : ['другая прогрессия'];
   // «другой …» для того, что сейчас играет
   const playing = LANES.filter(id => !isEmpty(state.tracks[id])).sort(() => Math.random() - 0.5).slice(0, 3).map(id => OTHER[id]);
   const pool = [...EXAMPLES].sort(() => Math.random() - 0.5);
@@ -868,6 +906,7 @@ function refreshChips() {
 
 function render() {
   renderTransport();
+  renderHarm();
   renderGrid();
   renderKnobs();
   renderPairs();
@@ -901,7 +940,6 @@ function renderGrid() {
     r.m.classList.toggle('on', tr.mute);
     r.s.classList.toggle('on', tr.solo);
     r.snd.textContent = SOUNDS[t.id][tr.sound].name;
-    if (document.activeElement !== r.vol) r.vol.value = tr.p.vol;
     if (t.kind === 'drum') {
       r.cells.forEach((c, i) => {
         const v = steps[i];
@@ -924,11 +962,85 @@ function renderGrid() {
 }
 
 function renderKnobs() {
-  for (const k of KNOBS) {
-    const inp = k.el.querySelector('input');
-    if (document.activeElement !== inp) inp.value = toPos(k, k.get());
-    k.el.querySelector('output').textContent = k.fmt(k.get());
-  }
+  for (const k of [...CH_FADERS, ...KNOBS]) if (k.el) paintFader(k);
+}
+
+// Вертикальный фейдер, как на диджейском пульте: тянуть вверх-вниз, колесо мыши, стрелки.
+function bindFader(el, k) {
+  k.el = el;
+  const ft = el.querySelector('.ft');
+  const setPos = p => {
+    k.set(fromPos(k, clamp(p, 0, 1) * 1000));
+    engine.applyParams();
+    paintFader(k);
+    save();
+    renderPairs();
+  };
+  let drag = null;
+  ft.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    e.preventDefault();
+    ft.setPointerCapture(e.pointerId);
+    pushUndo();
+    const r = ft.getBoundingClientRect(), onCap = e.target.closest('.fc');
+    // За колпачок — тянется от текущего места; по пазу — прыгает туда, куда нажали
+    const p0 = onCap ? toPos(k, k.get()) / 1000 : (r.bottom - 9 - e.clientY) / (r.height - 18);
+    if (!onCap) setPos(p0);
+    drag = { y: e.clientY, p0: clamp(p0, 0, 1), h: r.height - 18 };
+    el.classList.add('drag');
+  });
+  ft.addEventListener('pointermove', e => { if (drag) setPos(drag.p0 + (drag.y - e.clientY) / drag.h); });
+  const end = () => { drag = null; el.classList.remove('drag'); };
+  ft.addEventListener('pointerup', end);
+  ft.addEventListener('pointercancel', end);
+  el.addEventListener('wheel', e => { e.preventDefault(); setPos(toPos(k, k.get()) / 1000 + (e.deltaY < 0 ? 0.03 : -0.03)); }, { passive: false });
+  el.addEventListener('keydown', e => {
+    const d = { ArrowUp: 0.02, ArrowRight: 0.02, ArrowDown: -0.02, ArrowLeft: -0.02, PageUp: 0.1, PageDown: -0.1 }[e.key];
+    if (d) { e.preventDefault(); setPos(toPos(k, k.get()) / 1000 + d); }
+  });
+}
+function paintFader(k) {
+  const p = clamp(toPos(k, k.get()) / 1000, 0, 1), v = k.get();
+  k.el.style.setProperty('--pf', p.toFixed(3));
+  k.el.querySelector('output').textContent = (k.short_fmt || k.fmt)(v);
+  k.el.setAttribute('aria-valuenow', Math.round(p * 100));
+  k.el.setAttribute('aria-valuetext', k.fmt(v));
+  k.el.title = `${k.label}: ${k.fmt(v)}`;
+}
+
+// ——— Строка гармонии над секвенсором ———
+function renderHarm() {
+  const h = harmNow(), moving = h.prog !== 'none';
+  $('#harmBtn .hl').textContent = h.song ? 'Гармония части' : 'Гармония';
+  $('#harmChords').innerHTML = moving
+    ? progChords(h.prog, state.key, state.scale).map((n, k) => `<i data-k="${k}">${n}</i>`).join('')
+    : '<i class="still">на месте — нажми, и ноты пойдут по аккордам</i>';
+  $('#harmPer').textContent = moving ? `смена ${PER_LBL[h.per] || PER_LBL[1]}` : '';
+  markHarm();
+}
+function markHarm() {
+  const h = harmNow(), k = engine.playing && playhead >= 0 && h.prog !== 'none' ? harmIndex(h.prog, h.per, h.bar, playhead) : -1;
+  document.querySelectorAll('#harmChords i[data-k]').forEach(el => el.classList.toggle('now', +el.dataset.k === k));
+}
+function harmHtml() {
+  const h = state.harm, fit = GENRE_PROGS[state.genre] || [];
+  const list = [...new Set(['none', ...fit, ...Object.keys(PROGS).filter(x => x !== 'climb')])];
+  const btn = (a, v, label, on, title = '') => `<button class="tg${on ? ' on' : ''}" data-a="${a}" data-v="${v}"${title ? ` title="${title}"` : ''}>${label}</button>`;
+  return `<div class="ph"><b>Гармония</b><span>бас, аккорды и мелодия идут по кругу аккордов</span><button class="px" data-a="close" aria-label="Закрыть">×</button></div>`
+    + `<div class="prow"><span>Аккорды</span><div class="opts">${list.map(k => btn('prog', k, k === 'none' ? 'На месте' : (fit.includes(k) ? '★ ' : '') + chordLine(k, ' – '), h.prog === k, PROGS[k].name)).join('')}</div></div>`
+    + `<div class="prow"><span>Смена</span><div class="opts">${PER_ORDER.map(v => btn('per', v, PER_LBL[v], h.per === v)).join('')}</div></div>`
+    + `<div class="pfoot"><button class="tg lime" data-a="next">🎲 Другая прогрессия</button><span class="lenl">★ — подходят жанру. Выбранная гармония станет главной в треке</span></div>`;
+}
+function harmAction(b) {
+  const a = b.dataset.a, h = state.harm;
+  pushUndo();
+  if (a === 'prog') { h.prog = b.dataset.v; h.auto = false; }
+  else if (a === 'per') { h.per = +b.dataset.v; h.auto = false; if (h.prog === 'none') nextProg(); }
+  else if (a === 'next') nextProg();
+  save();
+  renderHarm();
+  setDid(harmSay());
+  if (popEl) { popEl.innerHTML = harmHtml(); placePop($('#harmBtn')); }
 }
 
 function renderPairs() {
@@ -969,7 +1081,8 @@ function renderSongCard() {
     const P = PART[s.type];
     const ic = (s.in && s.in !== 'none' ? `<i title="Вход: ${INS[s.in]}">${IN_ICON[s.in] || '•'}</i>` : '')
       + (s.head && s.head !== 'none' ? `<i title="Начало: ${HEADS[s.head]}">${s.head === 'scoop' ? '◡' : '·'}</i>` : '')
-      + (s.out && s.out !== 'none' ? `<i title="Конец: ${OUTS[s.out]}">${OUT_ICON[s.out] || '•'}</i>` : '');
+      + (s.out && s.out !== 'none' ? `<i title="Конец: ${OUTS[s.out]}">${OUT_ICON[s.out] || '•'}</i>` : '')
+      + (s.perf ? '<i title="Отыгрыш: каждый такт свой">♫</i>' : '');
     h += `<button class="sec" data-i="${i}" style="--c:${P.color}" title="${P.hint}"><b>${P.name}</b><small>${s.bars} т.</small><span class="ic">${ic}</span></button>`;
   });
   for (const id of LANES) {
@@ -1173,9 +1286,16 @@ function secHtml(i) {
     + `<div class="prow"><span>Начало</span><div class="opts">${opt('head', HEADS, s.head || 'none')}</div></div>`
     + `<div class="prow"><span>Конец</span><div class="opts">${opt('out', OUTS, s.out)}</div></div>`
     + `<div class="prow"><span>Фильтр</span><div class="opts">${opt('filter', FILTERS, s.filter)}</div></div>`
-    + `<div class="prow"><span>Гармония</span><div class="opts">${opt('prog', PROGS, s.prog)}</div></div>`
+    + `<div class="prow"><span>Гармония</span><div class="opts">${secProgs(s).map(k => `<button class="tg${k === (s.prog || 'none') ? ' on' : ''}" data-a="prog" data-v="${k}" title="${PROGS[k].name}">${k === 'none' ? 'На месте' : k === 'climb' ? 'Лестница вверх' : chordLine(k, ' – ')}</button>`).join('')}</div></div>`
+    + `<div class="prow"><span>Смена</span><div class="opts">${PER_ORDER.map(v => `<button class="tg${v === (s.per || (PROGS[s.prog] || PROGS.none).per || 1) ? ' on' : ''}" data-a="per" data-v="${v}">${PER_LBL[v]}</button>`).join('')}</div></div>`
+    + `<div class="prow"><span>Отыгрыш</span><div class="opts"><button class="tg${s.perf ? '' : ' on'}" data-a="perf" data-v="0">Нет</button><button class="tg${s.perf ? ' on' : ''}" data-a="perf" data-v="1">Каждый такт свой</button>${s.perf ? '<button class="tg" data-a="perf" data-v="1">🎲 Новая фраза</button>' : ''}</div></div>`
     + `<div class="pfoot"><button class="tg lime" data-a="play">▶ Играть отсюда</button><button class="tg" data-a="left"${i ? '' : ' disabled'}>←</button><button class="tg" data-a="right"${i < n - 1 ? '' : ' disabled'}>→</button>`
     + `<button class="tg" data-a="reroll">🎲 Пересочинить часть</button><button class="tg" data-a="dup">Копия</button><button class="tg del" data-a="del"${n > 1 ? '' : ' disabled'}>Удалить</button></div>`;
+}
+// Круги аккордов для части: сначала подходящие жанру трека.
+function secProgs(s) {
+  const fit = GENRE_PROGS[state.song.genre] || GENRE_PROGS.techno;
+  return [...new Set(['none', s.prog || 'none', ...fit, 'climb', ...Object.keys(PROGS)])];
 }
 function secAction(btn) {
   const a = btn.dataset.a, v = btn.dataset.v, secs = state.song.sections;
@@ -1189,7 +1309,17 @@ function secAction(btn) {
   else if (a === 'in') s.in = v;
   else if (a === 'out') s.out = v;
   else if (a === 'filter') s.filter = v;
-  else if (a === 'prog') s.prog = v;
+  else if (a === 'prog') { s.prog = v; if (!s.per) s.per = PROGS[v].per || 1; }
+  else if (a === 'per') s.per = +v;
+  else if (a === 'perf') {
+    if (v === '0') delete s.perf;
+    else {
+      const ids = ['lead', 'stab', 'perc', 'bass'].filter(id => s.lv[id] && !isEmpty(state.tracks[id]));
+      if (!ids.length) { setDid('В этой части молчат мелодия, аккорды, перкуссия и бас — включи их в клетках ниже', true); return; }
+      s.perf = makePerf(state, ids, s.bars);
+      setDid(`Отыгрыш: ${names(ids)} — каждый такт свой`);
+    }
+  }
   else if (a === 'head') s.head = v;
   else if (a === 'reroll') { rerollSection(state, i); setDid(`Часть «${PART[s.type].name}» пересочинена`); }
   else if (a === 'left' && i > 0) { [secs[i - 1], secs[i]] = [secs[i], secs[i - 1]]; i--; }
@@ -1368,6 +1498,7 @@ function bind() {
     if (popState.kind === 'note') noteAction(b);
     else if (popState.kind === 'sound') soundAction(b);
     else if (popState.kind === 'sec') secAction(b);
+    else if (popState.kind === 'harm') harmAction(b);
     else if (popState.kind === 'lvl') {
       pushUndo();
       const sec = state.song.sections[popState.i], id = popState.id, v = +b.dataset.v;
@@ -1389,7 +1520,7 @@ function bind() {
     }
   });
   document.addEventListener('pointerdown', e => {
-    if (popEl && !popEl.contains(e.target) && !e.target.closest?.('.sec, .nm, .vb, #heroBtn')) closePop();
+    if (popEl && !popEl.contains(e.target) && !e.target.closest?.('.sec, .nm, .vb, #heroBtn, #harmBtn')) closePop();
   }, true);
   window.addEventListener('resize', () => { closePop(); drawEnergy(); });
   document.addEventListener('scroll', e => { if (popEl && !popEl.contains(e.target)) closePop(); }, true);
@@ -1492,11 +1623,6 @@ function bind() {
     n.n = clamp(deg(state.scale, semiToDeg(n.n, state.scale) + (e.deltaY < 0 ? 1 : -1)), -12, 24);
     save(); renderGrid();
   }, { passive: false });
-  $('#grid').addEventListener('input', e => {
-    if (!e.target.classList.contains('vol')) return;
-    state.tracks[e.target.closest('.row').dataset.id].p.vol = +e.target.value;
-    engine.applyParams(); save();
-  });
 
   // Трек: режим, длина, сочинить, сохранить, части и дорожки
   $('#modeSeg').addEventListener('click', e => {
@@ -1515,6 +1641,14 @@ function bind() {
   $('#heroBtn').addEventListener('click', e => {
     if (popState && popState.kind === 'hero') { closePop(); return; }
     openHeroPop(e.currentTarget);
+  });
+  $('#harmBtn').addEventListener('click', async () => {
+    const btn = $('#harmBtn');
+    await ensureAudio();
+    if (popState && (popState.kind === 'harm' || popState.kind === 'sec')) { closePop(); return; }
+    // В режиме трека гармония своя у каждой части — открываем окошко текущей части
+    if (state.mode === 'song' && state.song) { openSecPop(harmNow().i); return; }
+    openPop(btn, harmHtml(), 'harmpop', { kind: 'harm' });
   });
   $('#bankSeg').addEventListener('click', e => {
     const b = e.target.closest('button');
@@ -1561,11 +1695,11 @@ function frame() {
   if (engine.ctx && engine.playing) {
     const ct = engine.ctx.currentTime;
     let s = null;
-    while (stepQ.length && stepQ[0][0] <= ct) s = stepQ.shift()[1];
-    if (s != null) setPlayhead(s);
+    while (stepQ.length && stepQ[0][0] <= ct) { const q = stepQ.shift(); s = q[1]; curBar = q[2]; }
+    if (s != null) { setPlayhead(s); markHarm(); }
     while (songQ.length && songQ[0][0] <= ct) songAt = songQ.shift()[1];
   } else songAt = -1;
-  if (songAt !== lastSongAt) { lastSongAt = songAt; markSectionRows(); }
+  if (songAt !== lastSongAt) { lastSongAt = songAt; markSectionRows(); if (state.mode === 'song') renderHarm(); }
   moveSongHead();
   if (voice.want && mic.analyser) $('#micBtn').style.setProperty('--lvl', Math.min(1, mic.level() * 9).toFixed(3));
   if (recording) $('#recBtn .lbl').textContent = fmtTime((performance.now() - recStartedAt) / 1000);
@@ -1602,7 +1736,8 @@ function init() {
   }).catch(() => {});
   engine.barFn = k => barData(state, k);
   engine.setMode(state.mode);
-  engine.onStep = (s, t) => { stepQ.push([t, s]); if (stepQ.length > 64) stepQ.shift(); };
+  engine.onStep = (s, t, bar) => { stepQ.push([t, s, bar]); if (stepQ.length > 64) stepQ.shift(); };
+  engine.harmFn = (bar, s) => harmShift(state.harm.prog, state.harm.per, bar, s);
   engine.onSongBar = (bar, t) => { songQ.push([t, bar]); if (songQ.length > 16) songQ.shift(); };
   engine.onSongEnd = t => {
     setTimeout(() => {

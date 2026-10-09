@@ -157,16 +157,15 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 .chip:active { transform: scale(.96); }
 
 /* ——— Двойные кнопки «− название +» ——— */
-.pairs { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 -2px; padding: 2px; }
-.pairs::-webkit-scrollbar { display: none; }
+.pairs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .pair {
-  flex: none; display: flex; align-items: stretch; height: 44px; border-radius: 13px; overflow: hidden;
+  display: flex; align-items: stretch; height: 44px; border-radius: 13px; overflow: hidden;
   background: rgba(24, 28, 19, .85); border: 1px solid var(--line2); backdrop-filter: blur(6px);
 }
 .pair .pm { width: 38px; border: 0; background: transparent; color: var(--muted); font: 600 19px/1 var(--font); transition: background .15s, color .15s; touch-action: manipulation; }
 .pair .pm:hover { color: var(--lime); background: rgba(212, 255, 58, .07); }
 .pair .pm:active { background: rgba(212, 255, 58, .16); color: var(--lime); }
-.pair .pl { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 74px; padding: 0 4px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.pair .pl { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 0; padding: 0 4px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 .pair .pl span { font-size: 12.5px; font-weight: 600; line-height: 1.1; }
 .pair .pl b { font: 600 10.5px/1.2 var(--mono); color: var(--lime); }
 
@@ -194,7 +193,6 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 .ms:hover { color: var(--text); border-color: rgba(238, 243, 228, .3); }
 .ms.m.on { background: #ff8a4d; border-color: #ff8a4d; color: #1b0d03; }
 .ms.s.on { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
-.rh .vol { width: 52px; flex: none; accent-color: var(--c); height: 4px; }
 
 .cells { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 4px; }
 .cell {
@@ -229,13 +227,13 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 /* ——— Звук ——— */
 .sound-in { padding: 8px 18px 18px; display: flex; flex-direction: column; gap: 10px; }
 .sound-in .lbl { color: var(--muted); font-size: 12.5px; font-weight: 500; margin-top: 4px; }
-.kits { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.kits { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
 .kit {
-  flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 13px; border-radius: 12px; text-align: left;
+  min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 13px; border-radius: 12px; text-align: left;
   background: var(--card2); border: 1px solid var(--line2); transition: border-color .2s, background .2s;
 }
-.kit b { font-weight: 700; font-size: 13.5px; white-space: nowrap; }
-.kit small { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.kit b { font-weight: 700; font-size: 13.5px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.kit small { color: var(--muted); font-size: 11.5px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .kit:hover { border-color: rgba(212, 255, 58, .35); }
 .kit.on { border-color: var(--lime); background: rgba(212, 255, 58, .08); }
 .kit.on b { color: var(--lime); }
@@ -298,7 +296,7 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 
 /* ——— Всплывающие окошки ——— */
 .pop {
-  position: fixed; z-index: 70; width: max-content; max-width: calc(100vw - 16px); padding: 10px; border-radius: 16px;
+  position: fixed; z-index: 70; width: max-content; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; padding: 10px; border-radius: 16px;
   background: #171b12; border: 1px solid rgba(212, 255, 58, .22); box-shadow: 0 24px 60px -18px rgba(0, 0, 0, .9);
   animation: pop .18s var(--spring);
 }
@@ -358,11 +356,53 @@ body:not(.playing) .logo i { animation-play-state: paused; }
 .toggle input:checked + .sw::after { transform: translateX(15px); background: var(--lime-ink); }
 .toggle input:focus-visible + .sw { outline: 2px solid var(--lime); outline-offset: 2px; }
 
-.knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px 20px; padding: 14px 0 0; border-top: 1px solid var(--line); margin-top: 6px; }
-.knob { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 8px; }
-.knob .kl { font-size: 12.5px; color: var(--muted); font-weight: 500; }
-.knob output { font: 600 11.5px/1 var(--mono); color: var(--text); }
-.knob input { grid-column: 1 / -1; width: 100%; accent-color: var(--lime); margin: 2px 0 0; }
+/* Пульт: вертикальные фейдеры */
+.mixer {
+  display: flex; flex-wrap: wrap; gap: 14px 22px; padding: 12px 14px 12px; border-radius: 16px;
+  background: linear-gradient(180deg, #161a12, #0f120c); border: 1px solid var(--line2);
+}
+.fgroup { flex: 8 1 300px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fgroup.master { flex: 9 1 340px; }
+.fgl { font: 700 10.5px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.faders { display: flex; gap: 6px; }
+.fd { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; outline: none; }
+.fd output { font: 600 10.5px/1 var(--mono); color: var(--text); white-space: nowrap; }
+.ft { position: relative; width: 100%; height: 128px; touch-action: none; cursor: ns-resize; }
+.ft::before {
+  content: ''; position: absolute; left: 50%; top: 4px; bottom: 4px; width: 4px; margin-left: -2px; border-radius: 2px;
+  background: rgba(0, 0, 0, .6); box-shadow: inset 0 0 0 1px rgba(238, 243, 228, .07);
+}
+.ft::after {
+  content: ''; position: absolute; left: 50%; top: 9px; bottom: 9px; width: 24px; margin-left: -12px; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(238, 243, 228, .18) 0 1px, transparent 1px 12.5%);
+  -webkit-mask: linear-gradient(90deg, #000 0 6px, transparent 6px 18px, #000 18px); mask: linear-gradient(90deg, #000 0 6px, transparent 6px 18px, #000 18px);
+}
+.fl {
+  position: absolute; left: 50%; bottom: 4px; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--c);
+  height: calc((100% - 8px) * var(--pf, 0)); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 60%, transparent);
+}
+.fc {
+  position: absolute; left: 50%; bottom: calc((100% - 18px) * var(--pf, 0)); z-index: 1; width: min(34px, 100%); height: 18px; transform: translateX(-50%);
+  border-radius: 5px; background: linear-gradient(180deg, #4a5140, #2a2f24 45%, #1d2119); border: 1px solid rgba(238, 243, 228, .22); box-shadow: 0 3px 8px rgba(0, 0, 0, .6);
+}
+.fc::after { content: ''; position: absolute; left: 3px; right: 3px; top: 50%; height: 2px; margin-top: -1px; border-radius: 1px; background: var(--c); }
+.fd.drag .fc, .fd:focus-visible .fc { border-color: var(--c); }
+.fn { font-size: 10.5px; font-weight: 600; color: var(--muted); text-align: center; line-height: 1.15; min-height: 2.3em; }
+
+/* Гармония над секвенсором */
+.harm-row { padding: 2px 18px 6px; }
+.harm {
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; max-width: 100%; min-height: 40px; padding: 6px 12px; border-radius: 12px;
+  background: var(--card2); border: 1px solid var(--line2); color: var(--text); text-align: left; transition: border-color .2s;
+}
+.harm:hover { border-color: rgba(212, 255, 58, .35); }
+.harm .hl { font: 700 10.5px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.harm .hc { display: flex; flex-wrap: wrap; gap: 4px; }
+.harm .hc i { font: 600 12.5px/1 var(--font); font-style: normal; padding: 5px 8px; border-radius: 7px; background: rgba(238, 243, 228, .06); color: var(--muted); transition: background .1s, color .1s; }
+.harm .hc i.now { background: var(--lime); color: var(--lime-ink); }
+.harm .hc i.still { background: none; padding: 0; color: var(--dim); font-weight: 500; }
+.harm small { color: var(--dim); font-size: 11.5px; }
+.harm svg { width: 14px; height: 14px; color: var(--muted); flex: none; }
 
 .log { list-style: none; margin: 0; padding: 8px 18px 16px; max-height: 300px; overflow: auto; display: flex; flex-direction: column; gap: 9px; }
 .log:empty::before { content: 'Здесь появятся твои команды и то, что я сделал.'; color: var(--dim); font-size: 13px; }
@@ -430,9 +470,21 @@ body:not(.playing) .logo i { animation-play-state: paused; }
   .grid-wrap { padding: 10px 12px 6px; }
   .grid { min-width: 560px; }
   .row { grid-template-columns: 132px 1fr; gap: 8px; }
-  .rh .vol { display: none; }
   .cell { height: 28px; font-size: 8.5px; }
-  .knobs { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .kits { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .kit { padding: 7px 9px; }
+  .kit b { font-size: 12.5px; }
+  .kit small { display: none; }
+  .pairs { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pair { height: 40px; }
+  .pair .pm { width: 34px; }
+  .mixer { padding: 10px 8px; gap: 14px; }
+  .fgroup, .fgroup.master { flex-basis: 100%; }
+  .faders { gap: 3px; }
+  .ft { height: 112px; }
+  .fn, .fd output { font-size: 9.5px; }
+  .master .fn, .master .fd output { font-size: 8.5px; letter-spacing: -.2px; }
+  .harm-row { padding: 2px 12px 6px; }
   .voices { grid-template-columns: 1fr 1fr; }
   .vb { padding: 0 8px 0 10px; gap: 6px; }
   .card-h { flex-wrap: wrap; }

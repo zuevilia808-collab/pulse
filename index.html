@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Unbounded:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -85,9 +85,12 @@
         <span class="spacer"></span><span id="genreTag" class="tag" hidden></span>
         <div id="bankSeg" class="seg bank" title="Рисунки для «переключения передач» в треке" hidden><button data-b="0" class="on">A</button><button data-b="1">B</button><button data-b="2">C</button></div>
       </div>
+      <div class="harm-row">
+        <button id="harmBtn" class="harm" title="Бас, аккорды и мелодия идут по кругу аккордов"><span class="hl">Гармония</span><span id="harmChords" class="hc"></span><small id="harmPer"></small><svg><use href="#i-down"/></svg></button>
+      </div>
       <div class="grid-wrap"><div id="grid" class="grid"></div></div>
       <div id="emptyHint" class="empty-hint">Скажи <b>«сделай техно»</b> — или собирай по частям: <b>«добавь бочку»</b>, <b>«хэты на офбит»</b>, <b>«кислотный бас»</b></div>
-      <div class="seq-foot">Нажми на клетку — поставить или убрать удар. <b>Удержи</b> ноту (или правая кнопка мыши) — выбрать ноту, акцент, глайд и длину. Нажми на название дорожки — выбрать звук. S — соло, можно у нескольких.</div>
+      <div class="seq-foot">Нажми на клетку — поставить или убрать удар. Над сеткой — <b>гармония</b>: по ней бас, аккорды и мелодия меняют аккорд. <b>Удержи</b> ноту (или правая кнопка мыши) — выбрать ноту, акцент, глайд и длину. Нажми на название дорожки — выбрать звук. S — соло, можно у нескольких.</div>
     </section>
 
     <section class="card sound">
@@ -97,7 +100,11 @@
         <div id="kits" class="kits"></div>
         <div class="lbl">Звук каждого инструмента — нажми, чтобы выбрать и послушать</div>
         <div id="voices" class="voices"></div>
-        <div id="knobs" class="knobs"></div>
+        <div class="lbl">Пульт — тяни фейдеры вверх и вниз</div>
+        <div class="mixer">
+          <div class="fgroup"><div class="fgl">Дорожки</div><div id="chFaders" class="faders"></div></div>
+          <div class="fgroup master"><div class="fgl">Мастер</div><div id="mFaders" class="faders"></div></div>
+        </div>
       </div>
     </section>
 
@@ -173,6 +180,6 @@
 </dialog>
 
 <div id="toasts" class="toasts"></div>
-<script type="module" src="js/app.js?v=3"></script>
+<script type="module" src="js/app.js?v=4"></script>
 </body>
 </html>

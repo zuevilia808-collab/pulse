@@ -1,7 +1,7 @@
 // Разбор русских голосовых команд в список действий.
 // Работает по корням слов, поэтому понимает «бочку», «бочка», «бочки», «хэты», «хай-хэт» и т. п.
-import { VARIANTS } from './music.js?v=3';
-import { KIT_WORDS, SOUND_WORDS } from './sounds.js?v=3';
+import { VARIANTS } from './music.js?v=4';
+import { KIT_WORDS, SOUND_WORDS } from './sounds.js?v=4';
 
 const B = '(?<![а-яa-z0-9])';
 const rx = s => new RegExp(B + '(?:' + s + ')');
@@ -67,6 +67,7 @@ for (const id in VARIANT_RX) VARIANT_RX[id] = VARIANT_RX[id].map(([v, s]) => [v,
 
 const GENRE_RX = [
   ['witch', 'ви?т?ч ?хаус|уич ?хаус|witch|ведьм|вичхаус|витчхаус'],
+  ['house', 'дип ?хаус|хаус|house|хауз'],
   ['acid', 'есид|асид|acid|кислотн(?:ое|ую|ого|ый) техно|кислотное|кислотняк'],
   ['minimal', 'минимал|minimal'],
   ['industrial', 'индаст|индуст|industrial'],
@@ -92,6 +93,7 @@ const R = Object.fromEntries(Object.entries({
   loopMode: 'петл|зацикл|режим петли|один такт|только такт|луп(?![а-я])',
   seekStart: 'с начала|в начало|сначала|перемотай|отмотай',
   reroll: 'друг(?:ой|ая|ую|ое) (?:вариант|верси|трек|аранжиров)|еще (?:вариант|раз сочини)|пересочини|перепиши трек|новый вариант',
+  harm: 'прогресс|гармони|смен\\S* аккорд|аккорд\\S* (?:меня|двига|ход|иду|пошл)|ход\\S* аккорд|круг\\S* аккорд|по аккордам',
   kit: 'набор|кит(?![а-я])|комплект|пресет|звуки|звучани',
   sound: 'звук|тембр|семпл|сампл',
   other: 'друг(?:ой|ую|ие|ое|ая|ого|им)|следующ|смени звук|поменяй звук',
@@ -230,6 +232,13 @@ function parseClause(c) {
   if (R.recStart.test(c)) return [A('recStart')];
   if (R.recStop.test(c) && !hasI) return [A('recStop')];
   if (R.reset.test(c)) return [A('reset')];
+  // Гармония: «другая прогрессия», «смена аккордов чаще», «без прогрессии»
+  if (R.harm.test(c)) {
+    if (R.zeroFx.test(c) || /на месте|одн\S* аккорд/.test(c)) return [A('harm', { prog: 'none' })];
+    if (/чаще|быстре|быстрей/.test(c)) return [A('harm', { per: -1 })];
+    if (/реже|медленн|дольше/.test(c)) return [A('harm', { per: 1 })];
+    return [A('harm')];
+  }
 
   if (!hasI) {
     // Наборы звуков: «набор витч хаус», «звуки 808»
@@ -332,7 +341,7 @@ function parseClause(c) {
     const variants = variantsFor(I, c);
     // Звуки: «бочка 808», «звук клэпа снейр», «другой хэт»
     const own = I.filter(i => SNDW[i]);
-    if (own.length && (R.sound.test(c) || /808|909|303/.test(c))) {
+    if (own.length && (R.sound.test(c) || /808|909|303|пиано|пианин|рояль|родес/.test(c))) {
       for (const id of own) {
         const name = findWord(SNDW[id], c.replace(/(?<![а-я])(?:звук|тембр)\S*/g, ' '));
         if (name) return [...out, A('sound', { tracks: [id], name })];

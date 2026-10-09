@@ -1,6 +1,6 @@
 // Звуковой движок: синтез всех инструментов в Web Audio, секвенсор с упреждением,
 // эффекты (реверб, эхо, румбл, сайдчейн), проигрывание трека по частям, запись в WAV.
-import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=3';
+import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=4';
 
 const dbToGain = v => 10 ** (v / 20);
 const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34 };
@@ -26,6 +26,8 @@ export class Engine {
     this.songPos = 0;
     this.seekTo = null;
     this.cur = null;
+    // Гармония петли: harmFn(такт, шаг) — на сколько ступеней лада сдвинуть бас, аккорды и мелодию.
+    this.harmFn = null;
     this.onStep = null;
     this.onKick = null;
     this.onBuildEnd = null;
@@ -350,18 +352,14 @@ export class Engine {
         const v = steps[s];
         if (v) this.hit(tr.id, t, v, T.p, s);
       } else {
-        const n = steps[s];
-        if (n) this.note(tr.id, t, n, T, s, st, sd, steps, cur ? cur.cut[tr.id] ?? 1 : 1);
+        let n = steps[s];
+        if (!n) continue;
+        // В петле ноты идут по аккордам гармонии (в треке это уже сделала аранжировка)
+        const d = !cur && this.harmFn ? this.harmFn(this.bar, s) : 0;
+        if (d) n = { ...n, n: deg(st.scale, semiToDeg(n.n, st.scale) + d) };
+        // На нарастании фильтр синтов открывается — вместо дроби хэтов
+        this.note(tr.id, t, n, T, s, st, sd, steps, (cur ? cur.cut[tr.id] ?? 1 : 1) * (b ? 0.6 + 1.3 * prog : 1));
       }
-    }
-    if (b) {
-      const every = prog < 0.5 ? 4 : prog < 0.75 ? 2 : 1;
-      if (s % every === 0) this.clap(t, 0.35 + 0.6 * prog, { tone: 900 + 2200 * prog, decay: 0.12 }, true);
-    }
-    if (cur && cur.roll) {
-      const p = cur.roll[0] + ((cur.roll[1] - cur.roll[0]) * s) / 16;
-      const every = p < 0.5 ? 4 : p < 0.75 ? 2 : 1;
-      if (s % every === 0) this.clap(t, 0.3 + 0.6 * p, { tone: 900 + 2200 * p, decay: 0.12 }, true);
     }
     if ((take || st.metronome) && s % 4 === 0) this.click(t, s === 0);
     this.onStep?.(s, t, this.bar);

@@ -1,7 +1,9 @@
 // Аранжировка: как из одного такта сделать трек на 1–5 минут — и каждый раз другой.
 // Генератор собирает трек из блоков по 16 тактов по правилам жанра (PROFILES) и одной из форм (FORMS).
 // Каждый вариант получает номер (seed): с тем же номером получится тот же трек. Правила словами — в ARRANGEMENT.md.
-import { TRACK, isEmpty, deg, semiToDeg, makePattern, VARIANTS, defaultVariant } from './music.js?v=3';
+import { TRACK, isEmpty, deg, semiToDeg, makePattern, VARIANTS, defaultVariant, PROGS, GENRE_PROGS, harmShift } from './music.js?v=4';
+
+export { PROGS };
 
 export const LANES = ['kick', 'clap', 'hat', 'ohat', 'perc', 'bass', 'stab', 'lead'];
 
@@ -11,8 +13,8 @@ export const PART = {
   build: { name: 'Набор', color: '#8fa2ff', hint: 'инструменты входят по одному' },
   main: { name: 'Грув', color: '#d4ff3a', hint: 'основная часть, всё качает' },
   break: { name: 'Брейк', color: '#b67cff', hint: 'бочка уходит, звучат аккорды и мелодия' },
-  pit: { name: 'Яма', color: '#7d6aa6', hint: 'почти тишина перед подъёмом' },
-  rise: { name: 'Подъём', color: '#ffb547', hint: 'шум растёт, дробь, срез низа' },
+  pit: { name: 'Яма', color: '#7d6aa6', hint: 'без бочки и баса: мелодия и перкуссия отыгрывают, каждый такт свой' },
+  rise: { name: 'Подъём', color: '#ffb547', hint: 'аккорды лезут вверх, фильтр открывается, шум растёт, срез низа' },
   drop: { name: 'Дроп', color: '#ff5c8a', hint: 'пик энергии, всё вместе' },
   down: { name: 'Спад', color: '#4dffb8', hint: 'энергия уходит, остаётся грув' },
   outro: { name: 'Аутро', color: '#8b9480', hint: 'выход: инструменты уходят по одному' },
@@ -29,16 +31,6 @@ export const OUTS = {
 // Начало части: первые 1–2 такта.
 export const HEADS = { none: 'Обычно', scoop: 'Без низа', minimal: 'Минимум' };
 export const FILTERS = { none: 'Нет', rise: 'Открывается', fall: 'Закрывается', dark: 'Тёмный', hp: 'Срез низа' };
-
-// Гармония: на сколько ступеней лада сдвигаются бас, аккорды и мелодия в каждом такте (per — тактов на аккорд).
-export const PROGS = {
-  none: { name: 'На месте', d: [0] },
-  'i-VI': { name: 'i – VI', d: [0, -2], per: 2 },
-  'i-VI-III-VII': { name: 'i – VI – III – VII', d: [0, -2, 2, -1] },
-  'i-iv-VI-v': { name: 'i – iv – VI – v', d: [0, 3, -2, -3] },
-  'i-VII-VI-VII': { name: 'i – VII – VI – VII', d: [0, -1, -2, -1] },
-  'i-II': { name: 'i – II', d: [0, 1], per: 2 },
-};
 
 // «Главный герой»: инструмент, который разгорается и затухает через весь трек, не глядя на границы частей.
 export const SHAPES = { arc: 'разгорается к пику', rise: 'растёт до конца', wave: 'две волны' };
@@ -71,44 +63,52 @@ const TURNS = {
 };
 const P = o => ({
   groove: ['kick', 'hat', 'bass', 'perc', 'clap', 'ohat'], music: ['stab', 'lead'], hero: ['bass', 'stab', 'lead', 'perc'],
-  progs: ['none'], progUse: 0.6, squeeze: 0.35, heads: 0.25, introCount: 2, softIntro: 0, breakBass: 0, bassF: false,
+  progUse: 0.88, pers: { 1: 3, 2: 3, 4: 1, 0.5: 1 }, squeeze: 0.35, heads: 0.25, introCount: 2, softIntro: 0, breakBass: 0, bassF: false,
   turns: TURNS, marks: ['crash', 'crash', 'hit', 'down'], drops: ['impact', 'impact', 'fake'], ...o,
 });
 export const PROFILES = {
-  techno: P({ name: 'Техно', forms: { classic: 3, twoPeaks: 2, trilogy: 2, slowBurn: 1, longBreak: 1, djTool: 1 }, progs: ['none', 'none', 'i-VII-VI-VII'] }),
+  techno: P({ name: 'Техно', forms: { classic: 3, twoPeaks: 2, trilogy: 2, slowBurn: 1, longBreak: 1, djTool: 1 } }),
   acid: P({
     name: 'Эсид', forms: { classic: 3, twoPeaks: 2, slowBurn: 2, trilogy: 1, plateau: 1 }, hero: ['stab', 'perc', 'lead'],
     music: ['stab', 'lead'], breakBass: 1, bassF: true,
   }),
   minimal: P({
     name: 'Минимал', forms: { djTool: 3, plateau: 3, slowBurn: 2, classic: 1 }, squeeze: 0.55, heads: 0.45, hero: ['perc', 'bass', 'stab'],
+    progUse: 0.7, pers: { 1: 1, 2: 2, 4: 3 },
     turns: { groove: ['scoop', 'delay', 'toms', 'none', 'none', 'none'], toBreak: ['delay', 'swell', 'scoop'], preDrop: ['gap', 'scoop'] },
     marks: ['hit', 'none', 'crash'], drops: ['impact', 'crash'],
   }),
   dub: P({
-    name: 'Даб-техно', forms: { fromSilence: 3, plateau: 2, slowBurn: 2 }, hero: ['stab'], softIntro: 0.8,
+    name: 'Даб-техно', forms: { fromSilence: 3, plateau: 2, slowBurn: 2 }, hero: ['stab'], softIntro: 0.8, pers: { 1: 1, 2: 2, 4: 3 },
     turns: { groove: ['delay', 'delay', 'wash', 'none', 'none'], toBreak: ['wash', 'delay', 'swell'], preDrop: ['gap', 'delay'] },
     marks: ['hit', 'none'], drops: ['crash', 'hit'],
   }),
-  detroit: P({ name: 'Детройт', forms: { classic: 3, longBreak: 2, twoPeaks: 1 }, hero: ['stab', 'lead'], progs: ['i-VI-III-VII', 'i-VII-VI-VII', 'i-iv-VI-v'], progUse: 0.8 }),
-  melodic: P({ name: 'Мелодик-техно', forms: { longBreak: 4, classic: 2, fromSilence: 2 }, hero: ['lead', 'stab'], progs: ['i-iv-VI-v', 'i-VI-III-VII'], progUse: 0.85, softIntro: 0.4 }),
-  hypnotic: P({ name: 'Гипнотик', forms: { plateau: 4, djTool: 2, slowBurn: 2, trilogy: 1 }, hero: ['perc', 'bass', 'stab'], squeeze: 0.45, heads: 0.4 }),
+  detroit: P({ name: 'Детройт', forms: { classic: 3, longBreak: 2, twoPeaks: 1 }, hero: ['stab', 'lead'], progUse: 0.95, pers: { 1: 2, 2: 3, 4: 1 } }),
+  melodic: P({ name: 'Мелодик-техно', forms: { longBreak: 4, classic: 2, fromSilence: 2 }, hero: ['lead', 'stab'], progUse: 0.95, pers: { 1: 2, 2: 3, 4: 1 }, softIntro: 0.4 }),
+  hypnotic: P({ name: 'Гипнотик', forms: { plateau: 4, djTool: 2, slowBurn: 2, trilogy: 1 }, hero: ['perc', 'bass', 'stab'], squeeze: 0.45, heads: 0.4, progUse: 0.7, pers: { 1: 1, 2: 2, 4: 3 } }),
   industrial: P({
-    name: 'Индастриал', forms: { earlyDrop: 2, twoPeaks: 3, trilogy: 2, classic: 1 }, hero: ['perc', 'bass'], music: ['stab'],
+    name: 'Индастриал', forms: { earlyDrop: 2, twoPeaks: 3, trilogy: 2, classic: 1 }, hero: ['perc', 'bass'], music: ['stab'], pers: { 0.5: 2, 1: 3, 2: 2 },
     turns: { groove: ['stutter', 'toms', 'kickroll', 'fill', 'none', 'none'], toBreak: ['stop', 'wash', 'scoop'], preDrop: ['gap', 'kickroll', 'stutter'] },
   }),
   hard: P({
-    name: 'Хард-техно', forms: { earlyDrop: 4, twoPeaks: 3, trilogy: 2 }, hero: ['bass', 'lead', 'stab'],
+    name: 'Хард-техно', forms: { earlyDrop: 4, twoPeaks: 3, trilogy: 2 }, hero: ['bass', 'lead', 'stab'], pers: { 0.5: 2, 1: 3, 2: 2 },
     turns: { groove: ['kickroll', 'fill', 'stutter', 'toms', 'none', 'none'], toBreak: ['stop', 'swell', 'wash'], preDrop: ['kickroll', 'gap', 'stutter'] },
     drops: ['impact', 'fake', 'impact'],
   }),
   witch: P({
     name: 'Witch House', forms: { fromSilence: 4, twoPeaks: 2, longBreak: 2 }, groove: ['kick', 'clap', 'hat', 'bass', 'perc', 'ohat'],
-    hero: ['stab', 'lead'], progs: ['i-VI', 'i-II', 'i-VII-VI-VII'], progUse: 0.8, softIntro: 1,
+    hero: ['stab', 'lead'], progUse: 0.9, pers: { 1: 2, 2: 3, 4: 1 }, softIntro: 1,
     turns: { groove: ['fill', 'stop', 'wash', 'delay', 'none', 'none'], toBreak: ['stop', 'wash', 'swell'], preDrop: ['gap', 'stop'] },
     marks: ['hit', 'down', 'none'], drops: ['impact', 'fake'],
   }),
+  house: P({
+    name: 'Хаус', forms: { classic: 3, slowBurn: 2, longBreak: 2, djTool: 1, plateau: 1 }, groove: ['kick', 'clap', 'hat', 'bass', 'ohat', 'perc'],
+    hero: ['stab', 'lead', 'bass'], progUse: 0.95, pers: { 1: 2, 2: 3, 4: 1 },
+    turns: { groove: ['fill', 'delay', 'scoop', 'toms', 'none', 'none'], toBreak: ['swell', 'delay', 'wash'], preDrop: ['gap', 'scoop', 'stutter'] },
+    marks: ['crash', 'crash', 'hit'], drops: ['impact', 'crash'],
+  }),
 };
+for (const [k, p] of Object.entries(PROFILES)) p.progs = GENRE_PROGS[k];
 const PROFILE_OF = { peak: 'techno' };
 export const profileFor = genre => (PROFILES[genre] ? genre : PROFILE_OF[genre] || 'techno');
 
@@ -281,11 +281,13 @@ function planLevels(t, bl, ctx) {
     if (M.length > 1 && chance(0.3)) lv[M[1]] = 1;
     if (prof.breakBass) lv.bass = prof.breakBass;
   } else if (t === 'pit') {
-    if (chance(0.5)) lv.perc = 1;
-    if (M[0]) lv[M[0]] = 1;
+    // Яма: бочка и бас молчат, зато мелодия, аккорды и перкуссия отыгрывают — каждый такт свой
+    M.forEach((id, k) => { lv[id] = k ? 1 : 2; });
+    if (G.includes('perc')) lv.perc = chance(0.6) ? 2 : 1;
   } else if (t === 'rise') {
+    // Подъём держится на гармонии и фильтре, а не на дроби хэтов
     lv.kick = chance(0.4) ? 1 : 0;
-    lv.hat = chance(0.5) ? 3 : 2;
+    lv.hat = chance(0.4) ? 1 : 0;
     lv.bass = 1;
     on(M);
     if (chance(0.5)) lv.perc = 1;
@@ -343,11 +345,143 @@ function planDetails(sec, bl, next, k, ctx) {
   let filter = 'none';
   if (t === 'intro' && bl.b === 0) filter = ctx.soft || chance(0.6) ? 'rise' : 'none';
   else if (t === 'outro' && bl.b === bl.nb - 1) filter = chance(0.75) ? 'fall' : 'none';
-  else if (t === 'break' || t === 'pit' || (t === 'insert' && ctx.insertKind === 'echo')) filter = chance(0.5) ? 'dark' : 'none';
+  else if (t === 'break' || (t === 'insert' && ctx.insertKind === 'echo')) filter = chance(0.5) ? 'dark' : 'none';
+  else if (t === 'pit') filter = chance(0.25) ? 'dark' : 'none';
   else if (t === 'rise') filter = 'hp';
 
-  const prog = ['break', 'drop', 'main', 'rise'].includes(t) && ctx.prog !== 'none' && chance(prof.progUse) ? ctx.prog : 'none';
-  Object.assign(sec, { in: inn, out, head, filter, prog, bassF: prof.bassF ? BASSF[t] : null });
+  // Гармония: в груве и дропе — главный круг аккордов, в брейке — свой, в подъёме аккорды лезут вверх
+  const H = ctx.harm, still = { prog: 'none', per: 1 };
+  let hm = still;
+  if (t === 'rise') hm = H.rise.prog === 'climb' ? { prog: 'climb', per: Math.max(0.5, sec.bars / 4) } : H.rise;
+  else if (t === 'break' || t === 'pit') hm = H.brk;
+  else if (t === 'main' || t === 'drop' || t === 'down') hm = chance(prof.progUse) ? H.main : still;
+  else if (t === 'build') hm = chance(0.6) ? H.main : still;
+  else if (t === 'intro') hm = bl.b > 0 && bl.b === bl.nb - 1 && chance(0.5) ? H.main : still;
+  else if (t === 'outro') hm = bl.b === 0 && chance(0.5) ? H.main : still;
+  else if (t === 'insert') hm = chance(0.5) ? H.main : still;
+
+  // Во втором и следующих дропах мелодия или аккорды иногда уходят на октаву выше — так пик звучит сильнее первого
+  if (t === 'drop' && bl.b === 0) ctx.oct = (ctx.drops = (ctx.drops || 0) + 1) > 1 && chance(0.45) ? { [ctx.M.includes('lead') ? 'lead' : ctx.M[0]]: 12 } : null;
+  Object.assign(sec, { in: inn, out, head, filter, prog: hm.prog, per: hm.per, bassF: prof.bassF ? BASSF[t] : null });
+  if (t === 'drop' && ctx.oct) sec.oct = { ...ctx.oct };
+}
+
+// Гармония трека: главный круг аккордов, круг для брейка и «лестница» для подъёма.
+function planHarmony(prof, state) {
+  const h = state.harm, own = h && !h.auto && h.prog !== 'none';
+  const per = () => Number(wpick(prof.pers));
+  const main = own ? { prog: h.prog, per: h.per } : { prog: pick(prof.progs), per: per() };
+  const moving = prof.progs.filter(x => x !== 'none');
+  const r = rnd();
+  // В брейке аккорды часто тянутся вдвое дольше — больше воздуха; иногда там свой круг
+  const brk = r < 0.45 && main.prog !== 'none' ? { prog: main.prog, per: Math.min(4, main.per * 2) } : r < 0.85 ? { prog: pick(moving) || main.prog, per: per() } : main;
+  // Подъём: аккорды лезут вверх по ступеням или меняются вдвое чаще — напряжение без дроби хэтов
+  const rise = chance(0.55) || main.prog === 'none' ? { prog: 'climb', per: 0 } : { prog: main.prog, per: Math.max(0.5, main.per / 2) };
+  return { main, brk, rise };
+}
+
+// ——— Отыгрыш: в яме и брейке у партий каждый такт свой, но всё в ладу и в сетке ———
+// Ритмические ячейки на такт: синкопы, 3-3-2, пунктир «три против четырёх».
+const CELLS = [
+  [0, 3, 6, 10, 12], [0, 3, 6, 8, 11, 14], [0, 2, 3, 6, 8, 10, 11, 14], [2, 3, 6, 7, 10, 11, 14],
+  [0, 3, 6, 9, 12, 15], [0, 1, 4, 6, 8, 9, 12, 14], [0, 4, 6, 10, 11, 14], [0, 6, 8, 14],
+  [0, 2, 4, 7, 10, 12, 14], [3, 6, 9, 12, 14, 15], [0, 3, 4, 7, 8, 11, 12, 15], [0, 2, 5, 8, 10, 13],
+];
+const TONES = [-3, 0, 2, 4, 6, 7, 9, 11]; // звуки аккорда — на сильные доли
+const nearTone = d => TONES.reduce((a, b) => (Math.abs(b - d) < Math.abs(a - d) ? b : a));
+const clampD = (d, hi = 11) => Math.max(-3, Math.min(hi, d));
+
+// Мотив: ритм из ячейки, мелодия ходит по ладу шагами и прыжками, на сильных долях — звук аккорда.
+function motif(cell, start) {
+  let d = start;
+  return cell.map((s, k) => {
+    if (k) d = clampD(d + pick([-2, -1, -1, 1, 1, 2, 2, 3, -3, 4]));
+    if (k === 0 || s % 4 === 0) d = nearTone(d);
+    return [s, d];
+  });
+}
+// Как мотив развивается от такта к такту.
+const VARY = {
+  seq: m => { const k = pick([1, 2, -1, -2, 3]); return m.map(([s, d]) => [s, clampD(d + k)]); }, // секвенция: тот же рисунок выше или ниже
+  shift: m => { const k = pick([1, 2, 3]); return m.map(([s, d]) => [(s + k) % 16, d]).sort((a, b) => a[0] - b[0]); }, // смещение — синкопа
+  oct: m => m.map(([s, d], i) => [s, i % 2 ? clampD(d + 7, 14) : d]), // прыжки через октаву
+  mirror: m => m.map(([s, d]) => [s, clampD(2 * m[0][1] - d)]), // зеркало
+  half: m => { const h = m.filter(([s]) => s < 8), k = pick([2, -2, 4]); return [...h, ...h.map(([s, d]) => [s + 8, clampD(d + k)])]; }, // половинка и ответ
+  run: m => { // пробежка по ладу в конце такта
+    const h = m.filter(([s]) => s < 10), last = h.length ? h[h.length - 1][1] : 0, dir = pick([1, -1]);
+    return [...h, ...[10, 11, 12, 13, 14, 15].map((s, i) => [s, clampD(last + dir * (i + 1))])];
+  },
+};
+const vary = m => VARY[pick(Object.keys(VARY))](m);
+const cadence = m => [...m.filter(([s]) => s < 8), [8, pick([0, 4, 7]), 6]]; // фраза приходит домой длинной нотой
+
+function leadPhrase(P) {
+  const A = motif(pick(CELLS), pick([0, 2, 4, 7])), B = motif(pick(CELLS), pick([4, 7, 9]));
+  if (P === 1) return [vary(A)];
+  if (P === 2) return [A, cadence(vary(A))];
+  if (P <= 4) return [A, vary(A), B, cadence(A)];
+  return [A, vary(A), vary(A), B, vary(A), vary(B), VARY.run(vary(A)), cadence(B)];
+}
+function phraseSteps(bar, scale) {
+  const s = Array(16).fill(null);
+  bar.forEach(([i, d, L], k) => {
+    const next = k + 1 < bar.length ? bar[k + 1][0] : 16;
+    s[i] = N(deg(scale, d), { len: L ? Math.min(L, 16 - i) : next - i >= 3 && chance(0.5) ? 2 : 1 });
+  });
+  return s;
+}
+function stabPhrase(P, lead, state) {
+  const sc = state.scale, pad = (state.tracks.stab.p.hold ?? 0.4) > 2, colors = [0, 0, 2, -2, 4, 3];
+  return Array.from({ length: P }, (_, k) => {
+    const s = Array(16).fill(null), last = k === P - 1;
+    if (pad) {
+      // Пэд: длинные аккорды, но цвет меняется — то тоника, то соседний аккорд
+      const whole = last || chance(0.4);
+      s[0] = N(deg(sc, k ? pick(colors) : 0), { len: whole ? 16 : 8 });
+      if (!whole) s[8] = N(deg(sc, pick(colors)), { len: 8 });
+      return s;
+    }
+    // Стаб отвечает мелодии в её паузах
+    const busy = new Set(lead ? lead[k].map(([i]) => i) : []);
+    const hits = pick(CELLS).filter(i => !busy.has(i) && !(last && i >= 8)).slice(0, 2 + Math.floor(rnd() * 3));
+    hits.forEach((i, h) => { s[i] = N(h === hits.length - 1 && chance(0.4) ? deg(sc, pick(colors)) : 0); });
+    if (last) s[8] = N(deg(sc, pick([0, 4, -2])), { len: 8 });
+    if (!s.some(Boolean)) s[0] = N(0);
+    return s;
+  });
+}
+function percPhrase(P) {
+  const base = pick(CELLS);
+  return Array.from({ length: P }, (_, k) => {
+    const s = Array(16).fill(0);
+    let cell = k % 2 ? pick(CELLS) : base;
+    if (k % 4 === 2) { const r = pick([1, 2, 3]); cell = cell.map(i => (i + r) % 16); } // ритм «спотыкается» и возвращается
+    cell.forEach(i => { s[i] = i % 4 === 0 ? 1 : pick([0.55, 0.7, 0.85]); });
+    if (k === P - 1) for (const i of [10, 11, 14]) s[i] = Math.max(s[i], 0.85);
+    return s;
+  });
+}
+
+// Фразы отыгрыша для партий ids на части длиной bars тактов (фраза — 4 или 8 тактов, дальше по кругу).
+export function makePerf(state, ids, bars) {
+  const P = bars >= 8 ? 8 : bars >= 4 ? 4 : Math.max(1, bars);
+  const lead = ids.includes('lead') ? leadPhrase(P) : null, out = {};
+  for (const id of ids) {
+    if (id === 'lead') out.lead = lead.map(b => phraseSteps(b, state.scale));
+    else if (id === 'stab') out.stab = stabPhrase(P, lead, state);
+    else if (id === 'perc') out.perc = percPhrase(P);
+    else if (TRACK[id].kind === 'synth') out[id] = leadPhrase(P).map(b => phraseSteps(b, state.scale));
+  }
+  return out;
+}
+function planPerf(sec, ctx, state) {
+  const t = sec.type, lanes = [];
+  if (t === 'pit') lanes.push(...ctx.M, 'perc');
+  else if (t === 'break') { lanes.push(...ctx.M); if (chance(0.5)) lanes.push('perc'); }
+  else if (t === 'insert' && ctx.insertKind === 'solo') lanes.push('perc', ...ctx.M);
+  const ids = lanes.filter(id => sec.lv[id] && !isEmpty(state.tracks[id]));
+  if (ids.length) sec.perf = makePerf(state, ids, sec.bars);
+  else delete sec.perf;
 }
 
 // Какой рисунок (A, B или C) играет у дорожки в блоке и с какого места части она вступает.
@@ -389,7 +523,7 @@ export function compose(state, minutes, genre, seed) {
     const hero = { id: pick(prof.hero), shape: pick(Object.keys(SHAPES)) };
     const ctx = {
       G, M: prof.music, hero: hero.id, prof, a: prof.introCount - (chance(0.3) ? 1 : 0),
-      soft: !!form.soft || chance(prof.softIntro), prog: pick(prof.progs), cur: {}, prev: null,
+      soft: !!form.soft || chance(prof.softIntro), harm: planHarmony(prof, state), cur: {}, prev: null,
     };
     const blocks = [];
     for (const seg of segs) {
@@ -406,10 +540,11 @@ export function compose(state, minutes, genre, seed) {
       const sec = { type: bl.type, bars: bl.bars, lv };
       planDetails(sec, bl, blocks[k + 1], k, ctx);
       planPatterns(sec, k, ctx, bl);
+      planPerf(sec, ctx, state);
       ctx.prev = lv;
       return sec;
     });
-    return { genre: pid, seed, form: formId, hero, alt: makeAlts(state, genre), sections };
+    return { genre: pid, seed, form: formId, hero, harm: ctx.harm, alt: makeAlts(state, genre), sections };
   });
 }
 
@@ -417,12 +552,13 @@ export function compose(state, minutes, genre, seed) {
 export function rerollSection(state, i) {
   const song = state.song, sec = song.sections[i], prof = PROFILES[song.genre] || PROFILES.techno;
   const G = ['kick', ...shuffle(prof.groove.filter(x => x !== 'kick'))];
-  const ctx = { G, M: prof.music, hero: song.hero ? song.hero.id : 'none', prof, a: G.length - 1, soft: false, prog: pick(prof.progs), cur: {}, prev: i ? song.sections[i - 1].lv : null };
+  const ctx = { G, M: prof.music, hero: song.hero ? song.hero.id : 'none', prof, a: G.length - 1, soft: false, harm: song.harm || planHarmony(prof, state), cur: {}, prev: i ? song.sections[i - 1].lv : null };
   const bl = { type: sec.type, bars: sec.bars, b: sec.type === 'intro' || sec.type === 'outro' ? 0 : 1, nb: 2 };
   const nx = song.sections[i + 1];
   sec.lv = planLevels(sec.type, bl, ctx);
   planDetails(sec, bl, nx && { type: nx.type, b: 0 }, i, ctx);
   planPatterns(sec, Math.max(1, i), ctx, bl);
+  planPerf(sec, ctx, state);
 }
 
 export function locate(song, bar) {
@@ -482,9 +618,62 @@ function fill(steps, kind) {
     c[15] = Math.max(c[15], 0.85);
     if (steps.kick) steps.kick[14] = 0;
   } else {
-    if (steps.hat) for (let i = 12; i < 16; i++) steps.hat[i] = Math.max(steps.hat[i], 0.7);
-    need(steps, 'ohat')[14] = 0.85;
+    // Провал: последняя доля без бочки — новая фраза падает сильнее
+    clearFrom(steps, ['kick'], 12);
   }
+}
+
+// ——— Свобода: живые отступления от рисунка, как у человека за пультом ———
+// Решения зависят от номера варианта и такта: тот же номер — те же отступления.
+const hash = (...a) => a.reduce((h, x) => Math.imul(h ^ (x | 0), 16777619) >>> 0, 2166136261);
+const trimBefore = (s, at) => { for (let i = 0; i < at; i++) if (s[i] && i + (s[i].len || 1) > at) s[i] = { ...s[i], len: at - i }; };
+const inRange = (n, lo, hi) => (n > hi ? n - 12 : n < lo ? n + 12 : n);
+
+function improvise(steps, sec, j, bar, song, scale, shiftAt, skip) {
+  const R = rngFrom(hash(song.seed || 1, bar, 77)), ch = p => R() < p, pk = a => a[Math.floor(R() * a.length)];
+  const t = sec.type, n = sec.bars;
+  const hot = t === 'drop' ? 1 : t === 'main' || t === 'down' ? 0.8 : t === 'build' || t === 'break' ? 0.55 : t === 'intro' || t === 'outro' ? 0.25 : 0.45;
+  const odd = j % 2 === 1, end4 = j % 4 === 3, end8 = j % 8 === 7;
+  const turn = j < n - 1 && shiftAt(16) !== shiftAt(15); // на следующем такте сменится аккорд
+  const rootNext = deg(scale, shiftAt(16));
+
+  const b = !skip.bass && steps.bass;
+  if (b) {
+    // Во втором такте пары одна-две ноты баса уходят на октаву, квинту или септиму
+    if (odd && ch(0.55 * hot)) {
+      const on = b.map((x, i) => (x ? i : -1)).filter(i => i > 0);
+      for (let c = 1 + Math.floor(R() * 2); c > 0 && on.length; c--) {
+        const i = on.splice(Math.floor(R() * on.length), 1)[0];
+        b[i] = { ...b[i], n: inRange(deg(scale, semiToDeg(b[i].n, scale) + pk([7, 4, -3, 2, 6])), -9, 19) };
+      }
+    }
+    // Эсид: акценты и глайды каждый раз в новых местах
+    if (song.genre === 'acid' && ch(0.6)) b.forEach((x, i) => { if (x && i) b[i] = { ...x, acc: ch(0.3), slide: !!b[i - 1] && ch(0.28) }; });
+    // Толчок: последняя шестнадцатая играет уже следующий аккорд, как живой басист
+    if (turn && ch(0.5 * hot + 0.2)) { trimBefore(b, 15); b[15] = { n: rootNext + (b.find(Boolean)?.n >= 12 ? 12 : 0), len: 1, acc: true }; }
+  }
+  const S = !skip.stab && steps.stab;
+  if (S) {
+    if (turn && !S[15] && ch(0.45 * hot)) { trimBefore(S, 15); S[15] = { n: rootNext, len: 1 }; }
+    else if (odd && ch(0.25)) { const on = S.map((x, i) => (x ? i : -1)).filter(i => i > 0); if (on.length > 1) S[pk(on)] = null; }
+  }
+  const L = !skip.lead && steps.lead;
+  if (L && L.some(Boolean)) {
+    // Ответ: вторая половина каждой четвёртой строки уходит выше или ниже
+    if (end4 && ch(0.4 + 0.4 * hot)) { const k = pk([2, -2, 4, 7, -3]); for (let i = 8; i < 16; i++) if (L[i]) L[i] = { ...L[i], n: inRange(deg(scale, semiToDeg(L[i].n, scale) + k), -5, 26) }; }
+    // Пробежка по ладу в конце восьми тактов
+    if (end8 && ch(0.55)) {
+      let k = 11;
+      while (k >= 0 && !L[k]) k--;
+      const d0 = k >= 0 ? semiToDeg(L[k].n, scale) : 0, dir = pk([1, -1]);
+      trimBefore(L, 12);
+      for (let i = 12; i < 16; i++) L[i] = { n: inRange(deg(scale, d0 + dir * (i - 11)), -5, 26), len: 1 };
+    }
+  }
+  // Живая динамика: хэты и перкуссия никогда не бьют одинаково
+  for (const id of ['hat', 'ohat', 'perc']) if (steps[id]) steps[id] = steps[id].map(v => (v && v < 1 ? Math.min(1, v * (0.78 + 0.36 * R())) : v));
+  // Раз в четыре такта перкуссия сдвигается — ритм «спотыкается» и возвращается
+  if (!skip.perc && steps.perc && end4 && ch(0.35 * hot)) { const r = pk([1, 2, 3]), p = steps.perc; steps.perc = p.map((_, i) => p[(i - r + 16) % 16]); }
 }
 
 // Рисунок дорожки в такте bar: выбранный вариант (A/B/C); полиметр продолжается через такты.
@@ -504,18 +693,23 @@ export function barData(state, bar) {
   if (!L) return null;
   const { s: sec, j } = L, n = sec.bars, last = j === n - 1;
   const groove = sec.type === 'main' || sec.type === 'drop' || sec.type === 'build';
-  const pr = PROGS[sec.prog] || PROGS.none;
-  const shift = pr.d[Math.floor(j / (pr.per || 1)) % pr.d.length];
-  const pats = sec.pat || {}, enter = sec.enter || {}, hero = song.hero && song.hero.id !== 'none' ? song.hero : null;
+  const shiftAt = s => harmShift(sec.prog, sec.per, j, s);
+  const pats = sec.pat || {}, enter = sec.enter || {}, perf = sec.perf || {}, oct = sec.oct || {};
+  const hero = song.hero && song.hero.id !== 'none' ? song.hero : null;
   const steps = {}, gain = {}, cut = {};
   for (const id of LANES) {
     const l = sec.lv[id] || 0;
     gain[id] = 1;
     cut[id] = 1;
-    const src = l ? source(state, id, pats[id] || 0, bar) : null;
+    const pf = l && perf[id];
+    const src = pf ? pf[j % pf.length] : l ? source(state, id, pats[id] || 0, bar) : null;
     if (!src || (enter[id] && j < Math.floor(n * enter[id]))) { steps[id] = null; continue; }
     if (drum(id)) { steps[id] = l === 1 ? thin(id, src) : l === 3 ? thick(id, src) : src.slice(); continue; }
-    const s = src.map(x => x && { ...x, n: shift ? shiftNote(x.n, shift, state.scale) : x.n });
+    const s = src.map((x, k) => {
+      if (!x) return x;
+      const d = shiftAt(k);
+      return { ...x, n: (d ? shiftNote(x.n, d, state.scale) : x.n) + (oct[id] || 0) };
+    });
     if (id === 'bass' && groove && l >= 2 && j % 4 === 3) {
       // Разворот в конце каждых 4 тактов: последняя нота баса — на октаву выше
       const k = s.map((x, i) => (x ? i : -1)).filter(i => i > 0).pop();
@@ -525,6 +719,16 @@ export function barData(state, bar) {
     if (l === 1) { gain[id] = 0.6; cut[id] = 0.5; } else if (l === 3) cut[id] = 1.35;
   }
   if (sec.bassF) { const [a, b] = sec.bassF; cut.bass *= a + (b - a) * (n > 1 ? j / (n - 1) : 1); }
+  improvise(steps, sec, j, bar, song, state.scale, shiftAt, perf);
+  // Руки на ручках: фильтр баса, аккордов и мелодии медленно «гуляет» — у каждого варианта по-своему
+  ['bass', 'stab', 'lead'].forEach((id, k) => {
+    if (!steps[id]) return;
+    const h = hash(song.seed || 1, k, 31), per = [8, 12, 16, 24, 32][h % 5], ph = (((h >>> 8) % 1000) / 1000) * 6.283;
+    const depth = id === 'bass' ? (song.genre === 'acid' ? 0.55 : 0.25) : 0.35;
+    cut[id] *= 1 + depth * Math.sin((6.283 * bar) / per + ph);
+  });
+  // Подъём: фильтр синтов открывается к дропу
+  if (sec.type === 'rise') for (const id of ['bass', 'stab', 'lead']) cut[id] *= 0.45 + (1.4 * (j + 1)) / n;
   if (hero && steps[hero.id]) {
     const m = heroCurve(hero.shape, (bar + 0.5) / songBars(song));
     if (drum(hero.id)) gain[hero.id] *= 0.55 + 0.45 * Math.min(1, m);
@@ -544,12 +748,10 @@ export function barData(state, bar) {
     else fx.push({ type: sec.in });
   } else if (groove && j > 0 && j % 16 === 0) fx.push({ type: 'crash' });
   if (last && sec.out === 'fill') fill(steps, 'end');
-  else if (groove && !last && (j + 1) % 8 === 0) fill(steps, ((j + 1) / 8) % 2 ? 'snare' : 'hats');
-  let roll = null;
+  else if (groove && !last && (j + 1) % 8 === 0) fill(steps, ((j + 1) / 8) % 2 ? 'snare' : 'skip');
   if (sec.out === 'rise') {
-    const R = Math.min(8, n), rr = Math.min(4, n);
+    const R = Math.min(8, n);
     if (j === n - R) fx.push({ type: 'riser', bars: R });
-    if (j >= n - rr) roll = [(j - (n - rr)) / rr, (j - (n - rr) + 1) / rr];
     if (last) { clearFrom(steps, ['kick', 'bass'], 8); clearFrom(steps, LANES, 12); }
   }
   if (last) {
@@ -576,7 +778,7 @@ export function barData(state, bar) {
     const w = Math.min(8, n), x0 = (j - (n - w)) / w;
     if (x0 >= 0) hp = [ex(20, 700, x0), ex(20, 700, x0 + 1 / w)];
   }
-  return { i: L.i, j, n, type: sec.type, steps, gain, cut, fx, roll, lp, hp };
+  return { i: L.i, j, n, type: sec.type, steps, gain, cut, fx, lp, hp };
 }
 
 // Энергия части для графика: [в начале, в конце], от 0 до 1.
