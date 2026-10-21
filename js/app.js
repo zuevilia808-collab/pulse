@@ -11,7 +11,7 @@ import { parse, normalize, QUICK } from './commands.js?v=5';
 import { Voice } from './voice.js?v=5';
 import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=5';
 import { Viz } from './viz.js?v=5';
-import { FL, flInit, flCandidates, flSound, FL_TRACKS } from './fl.js?v=5';
+import { FL, flInit, flCandidates, flSound, FL_TRACKS, instName } from './fl.js?v=5';
 import { voxAddFl, VOX, STYLES, LANGS, SEXES, EVERY, voxInit, voxFetch, voxIdsOf, voxPattern, voxLabel, voxInfo, voxFilter, voxSearch, voxShuffle, planSongVox } from './vox.js?v=5';
 
 const STORE = 'pulse.state.v1';
@@ -1585,7 +1585,11 @@ function soundHtml(id) {
   const cur = state.tracks[id].sound;
   // Живые звуки FL Studio: 12 случайных из всех подходящих, «🎲» — другие
   let fl = '';
-  if (FL.ready && FL_TRACKS.includes(id)) {
+  if ((id === 'stab' || id === 'lead') && Object.keys(FL.inst).length) {
+    // Записанные инструменты FL: рояль, Rhodes, струнные, хор, медь, сакс...
+    fl = `<div class="flh"><span>Инструменты FL Studio · ${Object.keys(FL.inst).length}</span></div><div class="snds flsnds">`
+      + Object.keys(FL.inst).map(k => { const sid = 'fli:' + k; return `<button class="snd${sid === cur ? ' on' : ''}" data-s="${sid}"><b>${esc(instName(k))}</b><small>${FL.inst[k].length} нот</small></button>`; }).join('') + '</div>';
+  } else if (FL.ready && FL_TRACKS.includes(id)) {
     const all = flCandidates(id);
     if (popState && popState.id === id && !popState.flList) popState.flList = voxShuffle(all.slice()).slice(0, 12).map(i => i.id);
     const list = (popState && popState.flList) || [];
@@ -1607,6 +1611,7 @@ async function soundAction(btn) {
   const sid = btn.dataset.fl ? flSound(id, btn.dataset.fl) : btn.dataset.s;
   if (!sid) return;
   if (btn.dataset.fl) await voxFetch([btn.dataset.fl]);
+  if (SOUNDS[id][sid] && SOUNDS[id][sid].p.sampler) await voxFetch(FL.inst[SOUNDS[id][sid].p.sampler].map(n => n[0]));
   pushUndo();
   setSound(id, sid);
   if (isEmpty(state.tracks[id])) setPattern(id, SOUNDS[id][sid].v || defaultVariant(id, state.genre));

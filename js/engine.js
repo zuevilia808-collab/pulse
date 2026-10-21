@@ -3,10 +3,24 @@
 import { TRACKS, TRACK, mtof, baseMidi, deg, semiToDeg } from './music.js?v=5';
 import { SOUNDS } from './sounds.js?v=5';
 import { voxBuffer, voxFetch, voxInfo, voxRotate } from './vox.js?v=5';
+import { FL } from './fl.js?v=5';
 
 const dbToGain = v => 10 ** (v / 20);
-const LEVEL = { kick: 0.72, clap: 0.75, hat: 0.5, ohat: 0.42, perc: 0.45, bass: 0.5, stab: 0.42, lead: 0.34, vox: 0.62 };
+// Уровни каналов: подобраны по замерам, чтобы баланс был как в клубном техно (от бочки: бас −5, аккорды −10, клэп −13, хэты −17 дБ)
+const LEVEL = { kick: 0.6, clap: 4.2, hat: 2.4, ohat: 1.5, perc: 1.1, bass: 0.5, stab: 1.35, lead: 1.1, vox: 0.62 };
 const LOOKAHEAD = 0.12;
+// Мягкий клиппер: до 0,7 сигнал не трогает, выше плавно прижимает к потолку 0,89 (−1 дБ)
+function softClip() {
+  const n = 4096, c = new Float32Array(n), knee = 0.7, top = 0.89;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1, a = Math.abs(x);
+    c[i] = Math.sign(x) * (a <= knee ? a : knee + (top - knee) * Math.tanh((a - knee) / (top - knee)));
+  }
+  return c;
+}
+// Стерео: панорама (−1 лево … 1 право) и ширина — задержка правого канала в мс (эффект Хааса), как в студии
+const PAN = { hat: 0.14, ohat: -0.16, clap: 0, perc: 0, stab: 0, lead: 0.05 };
+const WIDE = { stab: 13, lead: 9, ohat: 4, vox: 0 };
 const CHORDS = { seventh: [0, 2, 4, 6], triad: [0, 2, 4], fifth: [0, 4, 7], sus: [0, 3, 4] };
 
 const TICKER = 'let id=null;onmessage=e=>{if(e.data==="start"){if(!id)id=setInterval(()=>postMessage(0),20)}else{clearInterval(id);id=null}}';
@@ -57,19 +71,33 @@ export class Engine {
     this.lp = F('lowpass', 20000, 0.8);
     this.sHP = F('highpass', 20);
     this.sLP = F('lowpass', 20000, 0.8);
+    // Мастеринг: тон (плотный низ, «воздух» сверху) → склеивающий компрессор с медленной атакой
+    // (бочка остаётся панчевой) → подъём громкости → лимитер → мягкий клиппер (потолок −0,5 дБ)
+    this.tone = F('lowshelf', 70, 0.7);
+    this.tone.gain.value = 1.5;
+    const air = F('highshelf', 9000, 0.7);
+    air.gain.value = 2;
+    this.tone.connect(air);
     this.comp = ctx.createDynamicsCompressor();
-    this.comp.threshold.value = -10; this.comp.ratio.value = 2.5; this.comp.knee.value = 6;
-    this.comp.attack.value = 0.005; this.comp.release.value = 0.12;
+    this.comp.threshold.value = -16; this.comp.ratio.value = 2; this.comp.knee.value = 8;
+    this.comp.attack.value = 0.03; this.comp.release.value = 0.2;
+    air.connect(this.comp);
+    this.makeup = G(1.7);
     this.limit = ctx.createDynamicsCompressor();
-    this.limit.threshold.value = -3; this.limit.ratio.value = 20; this.limit.knee.value = 0;
-    this.limit.attack.value = 0.001; this.limit.release.value = 0.06;
+    this.limit.threshold.value = -2; this.limit.ratio.value = 20; this.limit.knee.value = 0;
+    this.limit.attack.value = 0.001; this.limit.release.value = 0.08;
+    this.clip = ctx.createWaveShaper();
+    this.clip.oversample = '4x';
+    this.clip.curve = softClip();
+    this.comp.connect(this.makeup).connect(this.limit).connect(this.clip);
     this.gate = G(1);
     this.stut = G(1); // заикание и «выключение» в конце частей трека
     this.out = G(1);
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.78;
-    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.stut).connect(this.comp).connect(this.limit)
+    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.stut).connect(this.tone);
+    this.clip
       .connect(this.gate).connect(this.out).connect(this.analyser).connect(ctx.destination);
 
     this.silent = G(0);
@@ -97,8 +125,17 @@ export class Engine {
     this.fb = G(0.42);
     const dLP = F('lowpass', 3200), dHP = F('highpass', 250);
     this.dlyOut = G(0.55);
-    this.dlyIn.connect(this.delay).connect(dLP).connect(dHP).connect(this.fb).connect(this.delay);
-    dHP.connect(this.dlyOut).connect(this.duck);
+    // Эхо «пинг-понг»: повторы по очереди слева и справа
+    this.delay2 = ctx.createDelay(2);
+    const fb2 = G(1), dm = ctx.createChannelMerger(2);
+    this.dlyIn.connect(this.delay).connect(dLP).connect(dHP);
+    // Каждый отскок немного слышен и с другой стороны — в моно эхо не разваливается
+    dHP.connect(dm, 0, 0);
+    dHP.connect(G(0.35)).connect(dm, 0, 1);
+    dHP.connect(this.fb).connect(this.delay2).connect(fb2).connect(this.delay);
+    this.delay2.connect(dm, 0, 1);
+    this.delay2.connect(G(0.35)).connect(dm, 0, 0);
+    dm.connect(this.dlyOut).connect(this.duck);
 
     // Румбл: тёмный реверб бочки → низкий фильтр → перегруз → сайдчейн
     this.rumbleIn = G(1);
@@ -118,15 +155,29 @@ export class Engine {
 
     // Каналы дорожек: громкость → громкость части трека → шина и посылы на эффекты
     this.ch = {};
+    this.pan = {};
     this.arrG = {};
     this.sendR = {};
     this.sendD = {};
     this.throwD = {};
     this.throwR = {};
     for (const t of TRACKS) {
-      const c = G(1), a = G(1);
-      // Голос не приседает под бочку — идёт прямо в сумму
-      c.connect(a).connect(t.kind === 'drum' ? this.drums : t.kind === 'vox' ? this.mix : this.duck);
+      const c = G(1), a = G(1), bus = t.kind === 'drum' ? this.drums : t.kind === 'vox' ? this.mix : this.duck;
+      // Голос не приседает под бочку — идёт прямо в сумму. Перед шиной — панорама и ширина.
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = PAN[t.id] || 0;
+      this.pan[t.id] = pan;
+      c.connect(a).connect(pan);
+      if (WIDE[t.id]) {
+        const m = ctx.createChannelMerger(2), dl = ctx.createDelay(0.05);
+        dl.delayTime.value = WIDE[t.id] / 1000;
+        // Правый канал — смесь прямого звука и задержанного: ширина есть, а в моно (телефон) не проваливается
+        const dry = G(0.75), wet = G(0.55);
+        pan.connect(m, 0, 0);
+        pan.connect(dry).connect(m, 0, 1);
+        pan.connect(dl).connect(wet).connect(m, 0, 1);
+        m.connect(bus);
+      } else pan.connect(bus);
       const r = G(0), d = G(0);
       a.connect(r).connect(this.revIn);
       a.connect(d).connect(this.dlyIn);
@@ -226,6 +277,7 @@ export class Engine {
     set(this.revOut.gain, st.master.reverb);
     set(this.dlyOut.gain, st.master.delay);
     set(this.delay.delayTime, (0.75 * 60) / st.bpm, 0.05);
+    set(this.delay2.delayTime, (0.75 * 60) / st.bpm, 0.05);
   }
 
   // ——— Транспорт ———
@@ -384,7 +436,7 @@ export class Engine {
 
   // ——— Ударные ———
   hit(id, t, v, p, s) {
-    if (p.sample) return this.sampleHit(id, t, v, p);
+    if (p.sample) return this.sampleHit(id, t, v, p, s);
     if (id === 'kick') this.kick(t, v, p);
     else if (id === 'clap') this.clap(t, v, p);
     else if (id === 'hat') this.hat(t, v, p, false);
@@ -392,8 +444,14 @@ export class Engine {
     else if (id === 'perc') this.perc(t, v, p, s);
   }
 
+  // Перкуссия «гуляет» между каналами: удары по очереди слева и справа
+  percSide(t, s) {
+    const p = this.pan.perc;
+    if (p) p.pan.setValueAtTime([-0.35, 0.3, -0.15, 0.4][((s || 0) >> 1) % 4], t);
+  }
+
   // Живой удар из FL Studio. «Короче/длиннее» — затухание, «выше/ниже» у бочки — скорость сэмпла.
-  sampleHit(id, t, v, p) {
+  sampleHit(id, t, v, p, s = 0) {
     const buf = voxBuffer(p.sample);
     if (!buf) { voxFetch([p.sample]); return; }
     const ctx = this.ctx, src = ctx.createBufferSource(), g = this.G(0);
@@ -405,6 +463,7 @@ export class Engine {
     g.gain.setTargetAtTime(0, t + len * 0.75, len * 0.12);
     src.connect(g);
     if (id === 'kick') { g.connect(this.kickShaper); g.connect(this.rumbleIn); } else g.connect(this.ch[id]);
+    if (id === 'perc') this.percSide(t, s);
     src.start(t);
     src.stop(t + len + 0.1);
     if (id === 'kick') {
@@ -551,6 +610,7 @@ export class Engine {
       o.stop(end);
     }
     g.connect(this.ch.perc);
+    this.percSide(t, s);
     const nz = p.noise ?? 0.4;
     if (nz > 0) {
       const n = this.noiseSrc(t, 0.02), ng = this.G(0);
@@ -600,10 +660,36 @@ export class Engine {
     this.bVca.gain.setTargetAtTime(0, now, 0.02);
   }
 
+  // Сэмплер: записанный инструмент FL играет ноту midi — ближайшая запись, сдвинутая по скорости
+  sampNote(dest, inst, midi, t, dur, p, lvl) {
+    const notes = FL.inst[inst];
+    if (!notes) return;
+    let best = notes[0];
+    for (const x of notes) if (Math.abs(x[1] - midi) < Math.abs(best[1] - midi)) best = x;
+    const buf = voxBuffer(best[0]);
+    if (!buf) { voxFetch(notes.map(x => x[0])); return; }
+    const src = this.ctx.createBufferSource(), g = this.G(0), att = p.attack ?? 0.003, rel = p.rel ?? 0.3;
+    lvl *= FL.instGain[inst] || 1; // инструменты FL записаны с разной громкостью — выравниваем
+    src.buffer = buf;
+    src.playbackRate.value = 2 ** ((midi - best[1]) / 12);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(lvl, t + att);
+    g.gain.setTargetAtTime(0, t + Math.max(att, dur), rel);
+    src.connect(g).connect(dest);
+    src.start(t);
+    src.stop(t + Math.max(att, dur) + rel * 5 + 0.1);
+  }
   stab(t, n, p, st, sd, cut = 1) {
     const ctx = this.ctx, d0 = semiToDeg(n.n, st.scale), root = baseMidi(st.key, 'stab') + 12 * (p.oct || 0);
     const chord = CHORDS[p.chord] || CHORDS.seventh, att = p.attack ?? 0.004, rel = p.decay;
     const gate = Math.max(att, Math.min((n.len || 1) * sd, p.hold ?? 0.4));
+    if (p.sampler) { // аккорд записанным инструментом
+      const flt = this.F('lowpass', Math.min(18000, (p.cutoff || 9000) * cut * 1.5), 0.7);
+      flt.connect(this.ch.stab);
+      const lvl = 1.2 * (p.gain ?? 1) / Math.sqrt(chord.length);
+      for (const k of chord) this.sampNote(flt, p.sampler, root + deg(st.scale, d0 + k), t, p.hold >= 99 ? (n.len || 1) * sd : gate, p, lvl);
+      return;
+    }
     const end = t + gate + rel * 4 + 0.15, c = p.cutoff * cut, det = p.det ?? 9;
     const flt = this.F('lowpass', c, p.res || 2), g = this.G(0);
     const lvl = 0.2 * Math.sqrt(4 / chord.length) * (p.gain ?? 1);
@@ -628,6 +714,12 @@ export class Engine {
   }
 
   lead(t, midi, n, p, sd, cut = 1) {
+    if (p.sampler) { // мелодия записанным инструментом
+      const flt = this.F('lowpass', Math.min(18000, (p.cutoff || 9000) * cut * 1.5), 0.7);
+      flt.connect(this.ch.lead);
+      this.sampNote(flt, p.sampler, midi, t, (n.len || 1) * sd * 0.9, p, 1.1 * (p.gain ?? 1));
+      return;
+    }
     const ctx = this.ctx, dur = (n.len || 1) * sd * 0.85, f = mtof(midi), att = p.attack ?? 0.005, rel = p.rel ?? 0.03;
     const end = t + Math.max(dur, att) + rel * 5 + 0.1, c = Math.min(16000, p.cutoff * cut), lvl = 0.35 * (p.gain ?? 1);
     const flt = this.F('lowpass', c, p.res || 3), g = this.G(0);

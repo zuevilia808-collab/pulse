@@ -1,7 +1,7 @@
 // Музыкальная часть «Пульса»: лады, дорожки, паттерны, генераторы и жанры.
 import { SOUNDS, KITS } from './sounds.js?v=5';
 import { STYLES, voxDefaults, voxPattern, genreVox } from './vox.js?v=5';
-import { FL, flCandidates, flSound } from './fl.js?v=5';
+import { FL, flCandidates, flSound, flInstFor } from './fl.js?v=5';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 export const NOTE_RU = ['До', 'До-диез', 'Ре', 'Ми-бемоль', 'Ми', 'Фа', 'Фа-диез', 'Соль', 'Соль-диез', 'Ля', 'Си-бемоль', 'Си'];
@@ -539,6 +539,8 @@ export function freshParts(st, genre, ids = null) {
     let sid = sl ? pick(sl) : null;
     // Живые ударные из FL Studio (если «Пульс» запущен на компьютере с FL) — примерно в трети случаев
     if (FL.ready && rnd() < 0.35) { const c = flCandidates(t.id, genre); if (c.length) sid = flSound(t.id, pick(c).id) || sid; }
+    // Аккорды и мелодия — записанным инструментом FL (рояль, Rhodes, струнные...) примерно в половине вариантов
+    if ((t.id === 'stab' || t.id === 'lead') && rnd() < 0.5) { const c = flInstFor(t.id, genre); if (c.length) sid = pick(c); }
     if (sid) { tr.sound = sid; tr.p = soundParams(t.id, sid, tr.p); }
   }
   // Характер в пределах звука: бочка чуть выше или ниже, короче или длиннее; бас ярче или темнее

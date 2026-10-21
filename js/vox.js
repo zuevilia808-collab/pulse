@@ -277,7 +277,10 @@ export function voxIdsOf(state) {
   if (tr) { tr.steps.forEach(x => x && ids.push(x.a)); if (tr.vox && tr.vox.swap) ids.push(...(tr.vox.pool || [])); }
   if (state.song) for (const s of state.song.sections) if (s.vox) s.vox.forEach(e => ids.push(e[2]));
   // Звуки FL: живые ударные дорожек и эффекты переходов
-  for (const t of Object.values(state.tracks)) if (t.p && t.p.sample) ids.push(t.p.sample);
+  for (const t of Object.values(state.tracks)) {
+    if (t.p && t.p.sample) ids.push(t.p.sample);
+    if (t.p && t.p.sampler && FL.inst[t.p.sampler]) ids.push(...FL.inst[t.p.sampler].map(n => n[0]));
+  }
   const fx = state.song && state.song.flfx;
   if (fx) ids.push(fx.riser, fx.impact, fx.down, ...(fx.ear || []));
   return [...new Set(ids)];

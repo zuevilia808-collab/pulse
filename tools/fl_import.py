@@ -162,7 +162,7 @@ def main():
             jobs.append((src, dst, cat))
             pack = 'ModeAudio' if rel.parts[0] == 'Drums (ModeAudio)' else 'Legacy' if rel.parts[0] == 'Legacy' else 'FL' if rel.parts[0] in FL_DIRS else rel.parts[0].strip('!@ ')[:40]
             meta.append({'id': 'fl:' + fid, 'cat': cat, 'name': vocal_text(src.stem) if cat == 'vocal' else nice(src.stem), 'pack': pack,
-                         'file': f'{cat}/{fid}.mp3'})
+                         'file': f'{cat}/{fid}.mp3', 'dir': '/'.join(rel.parts[:-1])})
     print('звуков:', len(jobs), flush=True)
     with ThreadPoolExecutor(8) as ex:
         ok = list(ex.map(convert, jobs))

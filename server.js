@@ -30,6 +30,25 @@ function openBrowser() {
 const server = http.createServer((req, res) => {
   let p;
   try { p = decodeURIComponent(new URL(req.url, URL_).pathname); } catch { res.writeHead(400).end(); return; }
+  // Сохранить отрендеренный трек в local/renders (для замеров звука и стрима). Только со страниц самого «Пульса».
+  if (req.method === 'POST' && p === '/api/render') {
+    const origin = req.headers.origin || '';
+    if (origin && !/^http:\/\/(127\.0\.0\.1|localhost):7870$/.test(origin)) { res.writeHead(403).end(); return; }
+    const name = (new URL(req.url, URL_).searchParams.get('name') || 'track').replace(/[^a-z0-9_-]/gi, '').slice(0, 60) || 'track';
+    const dir = path.join(ROOT, 'local', 'renders');
+    fs.mkdirSync(dir, { recursive: true });
+    const chunks = [];
+    let size = 0;
+    req.on('data', c => { size += c.length; if (size > 400e6) req.destroy(); else chunks.push(c); });
+    req.on('end', () => {
+      const file = path.join(dir, name + '.wav');
+      fs.writeFile(file, Buffer.concat(chunks), err => {
+        res.writeHead(err ? 500 : 200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(err ? { error: String(err) } : { file }));
+      });
+    });
+    return;
+  }
   if (p === '/') p = '/index.html';
   const file = path.normalize(path.join(ROOT, p));
   const ext = path.extname(file).toLowerCase();
