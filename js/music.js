@@ -145,7 +145,7 @@ export function emptyState() {
   tracks.vox.vox = voxDefaults(); // язык, пол и диктор, как часто звучит, из каких фраз меняется
   return {
     v: 1, bpm: 130, swing: 0, key: 9, scale: 'minor', genre: null, metronome: false,
-    master: { vol: 0, cut: 20000, rumble: 0, delay: 0.55, reverb: 0.55 },
+    master: { vol: 0, cut: 20000, rumble: 0, delay: 0.55, reverb: 0.55, tilt: 0 },
     tracks,
     mode: 'loop', song: null, songMin: 3,
     harm: { prog: 'none', per: 1, auto: true }, // гармония петли; auto — выбрана жанром, а не человеком
@@ -484,9 +484,10 @@ export const GENRES = {
     p: { hat: { vol: -9 }, ohat: { vol: -8 }, stab: { dly: 0.22, rev: 0.3, vol: -6 } },
   },
   hard: {
-    name: 'Хард-техно', bpm: 150, rumble: 0.5, kit: 'hard',
+    name: 'Хард-техно', bpm: 150, rumble: 0.5, kit: 'hard', tilt: 5,
     pat: { kick: 'four', clap: 'back', hat: 'six', ohat: 'off', bass: 'rolling' },
-    p: { clap: { rev: 0.35 } },
+    // По замерам хард-техно (Brutalismus 3000, Boiler Room): верхняя середина и хэты на 5 дБ громче, чем в остальном техно
+    p: { clap: { rev: 0.35, vol: 1 }, hat: { vol: -1 }, ohat: { vol: -4 }, stab: { vol: -3 } },
   },
   witch: {
     name: 'Witch House', bpm: 140, rumble: 0.1, kit: 'witch', reverb: 0.95, delay: 0.7, feel: 'халфтайм, ощущается как 70',
@@ -517,7 +518,7 @@ const POOL = {
     snd: { ...T909, kick: ['kpunch', 'kdeep', 'khard'], clap: ['crim', 'csnap'], hat: ['hnoise', 'h909', 'hmetal'], ohat: ['oride', 'onoise'], perc: ['pconga', 'ptom', 'pblip', 'pmetal'], bass: ['bsub', 'broll', 'bsquare'], stab: ['sdub', 'spluck'], lead: ['lpluck', 'lsine'] } },
   house: { pat: { kick: { four: 1 }, clap: { back: 4, sync: 1 }, hat: { six: 2, off: 2, eight: 1 }, ohat: { off: 3, sparse: 1 }, perc: { gen: 1 }, bass: { house: 4, offbeat: 1 }, stab: { chords: 3, dub: 1 }, lead: { melody: 1, arp: 1 } },
     snd: { ...T909, kick: ['khouse', 'khouse', 'k909'], clap: ['c909', 'csnap', 'c808'], hat: ['hshaker', 'hshaker', 'h909'], ohat: ['o909', 'o808'], perc: ['pconga', 'pconga', 'pcow', 'ptom'], bass: ['bhouse', 'bhouse', 'bsquare', 'b303q'], stab: ['skeys', 'skeys', 'sorgan', 'spluck'], lead: ['lbell', 'lsine', 'lpluck'] } },
-  hard: { pat: { kick: { four: 4, gallop: 2 }, clap: { back: 3, every: 1, sync: 1 }, hat: { six: 3, off: 1, gallop: 1 }, ohat: { off: 3 }, perc: { gen: 1 }, bass: { rolling: 4, offbeat: 1 }, stab: { sparse: 1, chords: 1 }, lead: { arp: 1 } },
+  hard: { pat: { kick: { four: 4, gallop: 2 }, clap: { back: 3, every: 1, sync: 1 }, hat: { six: 5, gallop: 1 }, ohat: { off: 3 }, perc: { gen: 1 }, bass: { rolling: 4, offbeat: 1 }, stab: { sparse: 1, chords: 1 }, lead: { arp: 1 } },
     snd: { ...T909, kick: ['khard', 'khard', 'kind', 'kpunch'], clap: ['c909', 'cind', 'csnare'], hat: ['hmetal', 'h909'], ohat: ['o909', 'oride'], bass: ['breese', 'breese', 'broll'], stab: ['srave', 'srave', 'spluck'], lead: ['lsaw', 'lsquare'] } },
   witch: { pat: { kick: { trap: 3, half: 1 }, clap: { slow: 1 }, hat: { trap: 1 }, ohat: { sparse: 1 }, perc: { sparse: 1 }, bass: { 808: 1 }, stab: { pad: 1 }, lead: { slow: 1 } },
     snd: { kick: ['kboom', 'kboom', 'k808'], clap: ['ctrap', 'ctrap', 'c808'], hat: ['htrap', 'htrap', 'h808'], ohat: ['o808', 'onoise'], perc: ['pchime', 'pchime', 'pblip'], bass: ['b808', 'b808', 'bsub'], stab: ['schoir', 'schoir', 'spad'], lead: ['lghost', 'lghost', 'lbell'] } },
@@ -538,7 +539,9 @@ export function freshParts(st, genre, ids = null) {
     const sl = P.snd[t.id];
     let sid = sl ? pick(sl) : null;
     // Живые ударные из FL Studio (если «Пульс» запущен на компьютере с FL) — примерно в трети случаев
-    if (FL.ready && rnd() < 0.35) { const c = flCandidates(t.id, genre); if (c.length) sid = flSound(t.id, pick(c).id) || sid; }
+    // Бочку FL — только там, где подходят 909/хаус-бочки: в харде, индастриале, пик-тайме, эсиде и гипнотике бочка своя (жёсткая, с румблом)
+    const flOk = t.id !== 'kick' || ['house', 'detroit', 'minimal', 'dub', 'melodic', 'witch'].includes(genre);
+    if (FL.ready && flOk && rnd() < 0.35) { const c = flCandidates(t.id, genre); if (c.length) sid = flSound(t.id, pick(c).id) || sid; }
     // Аккорды и мелодия — записанным инструментом FL (рояль, Rhodes, струнные...) примерно в половине вариантов
     if ((t.id === 'stab' || t.id === 'lead') && rnd() < 0.5) { const c = flInstFor(t.id, genre); if (c.length) sid = pick(c); }
     if (sid) { tr.sound = sid; tr.p = soundParams(t.id, sid, tr.p); }
@@ -560,6 +563,7 @@ export function genreState(state, id) {
   st.master.rumble = g.rumble || 0;
   st.master.cut = 20000;
   st.master.reverb = g.reverb ?? 0.55;
+  st.master.tilt = g.tilt || 0; // тональный наклон жанра на мастере, дБ выше 2,5 кГц
   st.master.delay = g.delay ?? 0.55;
   const kit = KITS[g.kit || 'techno'];
   for (const t of TRACKS) {

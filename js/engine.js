@@ -75,9 +75,12 @@ export class Engine {
     // (бочка остаётся панчевой) → подъём громкости → лимитер → мягкий клиппер (потолок −0,5 дБ)
     this.tone = F('lowshelf', 70, 0.7);
     this.tone.gain.value = 1.5;
+    // Наклон жанра: хард-техно ярче наверху (по замерам эталонов)
+    this.tilt = F('highshelf', 2500, 0.7);
+    this.tone.connect(this.tilt);
     const air = F('highshelf', 9000, 0.7);
     air.gain.value = 2;
-    this.tone.connect(air);
+    this.tilt.connect(air);
     this.comp = ctx.createDynamicsCompressor();
     this.comp.threshold.value = -16; this.comp.ratio.value = 2; this.comp.knee.value = 8;
     this.comp.attack.value = 0.03; this.comp.release.value = 0.2;
@@ -96,7 +99,25 @@ export class Engine {
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.78;
-    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.stut).connect(this.tone);
+    this.mix.connect(this.hp).connect(this.lp).connect(this.sHP).connect(this.sLP).connect(this.stut);
+    // Середина/бока, как в клубном мастеринге: всё ниже 150 Гц — строго в центре (бочка и бас бьют в лоб),
+    // боковой сигнал приглушён (this.width) — по замерам эталонов техно бока на ~12 дБ тише центра
+    {
+      const sp = ctx.createChannelSplitter(2), mg = ctx.createChannelMerger(2), mono = g => { g.channelCount = 1; g.channelCountMode = 'explicit'; return g; };
+      const M = mono(G(1)), S = mono(G(1)), sHPf = F('highpass', 150, 0.7), neg = G(-1);
+      this.width = G(0.75);
+      this.stut.connect(sp);
+      sp.connect(G(0.5), 0).connect(M);
+      sp.connect(G(0.5), 1).connect(M);
+      sp.connect(G(0.5), 0).connect(S);
+      sp.connect(G(-0.5), 1).connect(S);
+      S.connect(sHPf).connect(this.width);
+      M.connect(mg, 0, 0);
+      M.connect(mg, 0, 1);
+      this.width.connect(mg, 0, 0);
+      this.width.connect(neg).connect(mg, 0, 1);
+      mg.connect(this.tone);
+    }
     this.clip
       .connect(this.gate).connect(this.out).connect(this.analyser).connect(ctx.destination);
 
@@ -272,6 +293,7 @@ export class Engine {
     set(this.bF1.Q, b.res);
     if (!this.playing) { set(this.bF1.frequency, b.cutoff); set(this.bF2.frequency, b.cutoff * 1.3); }
     set(this.out.gain, dbToGain(st.master.vol));
+    set(this.tilt.gain, st.master.tilt || 0, 0.3);
     set(this.lp.frequency, st.master.cut, 0.25);
     set(this.rumbleOut.gain, st.master.rumble * 1.6);
     set(this.revOut.gain, st.master.reverb);
@@ -1102,13 +1124,18 @@ export class Engine {
 
 // Быстрый рендер всего трека без проигрывания: отдельный движок на OfflineAudioContext,
 // такты подкладываются кусками по полсекунды (suspend → запланировать → resume).
-export async function renderSong(state, barFn, bars, onProgress) {
-  const sr = 44100, barDur = 240 / state.bpm, tail = 3, dur = bars * barDur + tail + 0.2;
+// bpmFn(такт) — темп по ходу трека (в диджей-сете начало трека играет в темпе предыдущего, потом темп сползает к своему).
+export async function renderSong(state, barFn, bars, onProgress, bpmFn = null) {
+  const sr = 44100, tail = 3;
+  let total = 0;
+  for (let k = 0; k < bars; k++) total += 240 / (bpmFn ? bpmFn(k) : state.bpm);
+  const dur = total + tail + 0.2;
   const ctx = new OfflineAudioContext(2, Math.ceil(dur * sr), sr);
+  if (bpmFn) state.bpm = bpmFn(0);
   const e = new Engine(() => state);
   await e.init(ctx);
   e.mode = 'song';
-  e.barFn = k => (k < bars ? barFn(k) : null);
+  e.barFn = k => { if (k < bars && bpmFn) state.bpm = bpmFn(k); return k < bars ? barFn(k) : null; };
   e.start(0.1);
   const CH = 0.5;
   e.tick(CH + 0.2);
