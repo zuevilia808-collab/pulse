@@ -36,15 +36,19 @@ function barTimes(bars, bpmAt) {
 export function planSet({ minutes = 60, mood = 'night', seed = 1 + Math.floor(Math.random() * 99999) } = {}) {
   const M = MOODS[mood] || MOODS.night;
   return withSeed(seed, () => {
-    const n = Math.max(2, Math.round((minutes - 1) / (TRACK_MIN - 0.9)));
+    // Сколько треков: каждый ~5,5 мин, но с соседом звучит вместе ~0,6 мин — считаем с запасом, лишнее отрежем ниже
+    const n = Math.max(2, Math.ceil(minutes / (TRACK_MIN - 0.7)));
     const tracks = [];
     let prevGenre = null, prevBpm = null, start = 0;
     for (let i = 0; i < n; i++) {
       const x = n > 1 ? i / (n - 1) : 0, q = Math.min(3, Math.floor(x * 4));
       // Темп по кривой энергии: плавно между точками четвертей
       const f = x * 3, k = Math.min(2, Math.floor(f)), target = Math.round(M.bpm[k] + (M.bpm[k + 1] - M.bpm[k]) * (f - k));
-      let genre = pick(M.path[q]);
-      if (genre === prevGenre && M.path[q].length > 1) genre = pick(M.path[q].filter(g => g !== prevGenre));
+      // Жанр — из подходящих по темпу (диджей не прыгает на 10 BPM): ±9 от нужного темпа, и не тот же, что был
+      let pool = M.path[q].filter(g => Math.abs(GENRES[g].bpm - target) <= 9);
+      if (!pool.length) pool = M.path[q];
+      if (pool.length > 1) pool = pool.filter(g => g !== prevGenre);
+      const genre = pick(pool);
       const bpm = clamp(target, GENRES[genre].bpm - 8, GENRES[genre].bpm + 8);
       const tseed = 1 + Math.floor(rnd() * 99999);
       const state = genreState(emptyState(), genre);
@@ -74,6 +78,14 @@ export function planSet({ minutes = 60, mood = 'night', seed = 1 + Math.floor(Ma
       prevGenre = genre;
       prevBpm = bpm;
     }
+    // Лишние треки в конце убираем, если сет и без них уже нужной длины
+    while (tracks.length > 2) {
+      const prev = tracks[tracks.length - 2];
+      if (prev.start + prev.times[prev.bars] < minutes * 60) break;
+      tracks.pop();
+      delete prev.hpFrom;
+      delete prev.fadeOut;
+    }
     const last = tracks[tracks.length - 1];
     const total = last.start + last.times[last.bars];
     return { seed, mood, minutes, name: M.name, tracks, total };
@@ -92,6 +104,16 @@ export function setAt(plan, t) {
   return { track: cur, bar: b, beat, bpm: cur.bpmAt(b), type: d ? d.type : 'outro', partName: d ? PART[d.type].name : '', steps: d ? d.steps : {} };
 }
 
+// Загрузить WAV на компьютер кусками по 8 МБ (большой Blob браузер не тянет)
+async function upload(file, r) {
+  const bytes = new Uint8Array(r.pcm.buffer), CH = 8 << 20;
+  let res = await fetch(`/api/render?name=${file}`, { method: 'POST', body: r.header }).then(x => x.json());
+  for (let o = 0; o < bytes.length && res.file; o += CH) {
+    res = await fetch(`/api/render?name=${file}&append=1`, { method: 'POST', body: bytes.slice(o, o + CH) }).then(x => x.json());
+  }
+  if (!res.file) throw new Error('Не удалось сохранить трек: ' + (res.error || ''));
+}
+
 // Звук всего сета: каждый трек — в свой файл, потом сведение на компьютере. onProgress(доля, подпись).
 export async function renderSetAudio(plan, name, onProgress = () => {}) {
   const parts = [];
@@ -99,10 +121,10 @@ export async function renderSetAudio(plan, name, onProgress = () => {}) {
     const st = structuredClone(T.state);
     await voxFetch(voxIdsOf(st));
     onProgress(T.i / (plan.tracks.length + 1), `Трек ${T.i + 1} из ${plan.tracks.length}: ${GENRES[T.genre].name}, ${T.bpm} BPM`);
-    const r = await renderSong(st, k => barData(st, k), T.bars, p => onProgress((T.i + p) / (plan.tracks.length + 1), `Трек ${T.i + 1} из ${plan.tracks.length}: ${GENRES[T.genre].name}, ${T.bpm} BPM`), T.bpmAt);
+    let r = await renderSong(st, k => barData(st, k), T.bars, p => onProgress((T.i + p) / (plan.tracks.length + 1), `Трек ${T.i + 1} из ${plan.tracks.length}: ${GENRES[T.genre].name}, ${T.bpm} BPM`), T.bpmAt, true);
     const file = `${name}_t${String(T.i).padStart(2, '0')}`;
-    const res = await fetch('/api/render?name=' + file, { method: 'POST', body: r.blob }).then(x => x.json());
-    if (!res.file) throw new Error('Не удалось сохранить трек: ' + (res.error || ''));
+    await upload(file, r);
+    r = null;
     parts.push({ file: file + '.wav', start: T.start, fadeIn: T.fadeIn, hpUntil: T.hpUntil, hpFrom: T.hpFrom, fadeOut: T.fadeOut });
   }
   onProgress(plan.tracks.length / (plan.tracks.length + 1), 'Свожу треки в один сет…');

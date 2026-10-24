@@ -1125,7 +1125,7 @@ export class Engine {
 // Быстрый рендер всего трека без проигрывания: отдельный движок на OfflineAudioContext,
 // такты подкладываются кусками по полсекунды (suspend → запланировать → resume).
 // bpmFn(такт) — темп по ходу трека (в диджей-сете начало трека играет в темпе предыдущего, потом темп сползает к своему).
-export async function renderSong(state, barFn, bars, onProgress, bpmFn = null) {
+export async function renderSong(state, barFn, bars, onProgress, bpmFn = null, raw = false) {
   const sr = 44100, tail = 3;
   let total = 0;
   for (let k = 0; k < bars; k++) total += 240 / (bpmFn ? bpmFn(k) : state.bpm);
@@ -1153,7 +1153,19 @@ export async function renderSong(state, barFn, bars, onProgress, bpmFn = null) {
     out[2 * i] = Math.max(-1, Math.min(1, L[i])) * 32767;
     out[2 * i + 1] = Math.max(-1, Math.min(1, R[i])) * 32767;
   }
+  // raw — без Blob: звук и заголовок WAV отдельно (для загрузки длинных треков кусками)
+  if (raw) return { pcm: out, header: wavHeader(n, sr, 2), sec: n / sr };
   return { blob: wavBlob([out], n, sr, 2), sec: n / sr };
+}
+
+export function wavHeader(frames, sr, ch) {
+  const bytes = frames * ch * 2, h = new DataView(new ArrayBuffer(44));
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) h.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); h.setUint32(4, 36 + bytes, true); str(8, 'WAVE');
+  str(12, 'fmt '); h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, ch, true);
+  h.setUint32(24, sr, true); h.setUint32(28, sr * ch * 2, true); h.setUint16(32, ch * 2, true); h.setUint16(34, 16, true);
+  str(36, 'data'); h.setUint32(40, bytes, true);
+  return new Uint8Array(h.buffer);
 }
 
 export function wavBlob(chunks, frames, sr, ch) {

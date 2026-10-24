@@ -40,9 +40,11 @@ const server = http.createServer((req, res) => {
     const chunks = [];
     let size = 0;
     req.on('data', c => { size += c.length; if (size > 400e6) req.destroy(); else chunks.push(c); });
+    // append=1 — дописать кусок в конец (длинные треки приходят частями, чтобы браузер не упирался в память)
+    const append = new URL(req.url, URL_).searchParams.get('append') === '1';
     req.on('end', () => {
       const file = path.join(dir, name + '.wav');
-      fs.writeFile(file, Buffer.concat(chunks), err => {
+      (append ? fs.appendFile : fs.writeFile)(file, Buffer.concat(chunks), err => {
         res.writeHead(err ? 500 : 200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(err ? { error: String(err) } : { file }));
       });
