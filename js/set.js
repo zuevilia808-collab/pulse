@@ -32,35 +32,44 @@ function barTimes(bars, bpmAt) {
   return t;
 }
 
+// Следующий трек сета. x — где мы в сете (0 — начало, 1 — конец): от этого настроение и темп.
+// prev — прошлый трек (его жанр, темп и сколько тактов сводим): новый начинается в его темпе и за 16 тактов уходит к своему.
+export function makeTrack(x, mood = 'night', prev = null) {
+  x = clamp(x || 0, 0, 1);
+  const M = MOODS[mood] || MOODS.night, q = Math.min(3, Math.floor(x * 4));
+  // Темп по кривой энергии: плавно между точками четвертей
+  const f = Math.min(2.999, x * 3), k = Math.floor(f), target = Math.round(M.bpm[k] + (M.bpm[k + 1] - M.bpm[k]) * (f - k));
+  // Жанр — из подходящих по темпу (диджей не прыгает на 10 BPM): ±9 от нужного темпа, и не тот же, что был
+  let pool = M.path[q].filter(g => Math.abs(GENRES[g].bpm - target) <= 9);
+  if (!pool.length) pool = M.path[q];
+  if (pool.length > 1 && prev) pool = pool.filter(g => g !== prev.genre);
+  const genre = pick(pool);
+  const bpm = clamp(target, GENRES[genre].bpm - 8, GENRES[genre].bpm + 8);
+  const seed = 1 + Math.floor(rnd() * 99999);
+  const state = genreState(emptyState(), genre);
+  state.bpm = bpm;
+  state.song = compose(state, TRACK_MIN, genre, seed, true);
+  state.mode = 'song';
+  const bars = songBars(state.song), from = prev ? prev.bpm : bpm, xin = prev ? prev.xout : 0;
+  const bpmAt = b => (b < xin ? from : b < xin + 16 ? from + ((bpm - from) * (b - xin + 1)) / 16 : bpm);
+  const T = { genre, bpm, from, seed, state, bars, xin, bpmAt, name: GENRES[genre].name };
+  T.times = barTimes(bars, bpmAt);
+  // Сколько тактов этого трека сведём со следующим: по аутро (16–32, кратно 8)
+  T.xout = clamp(Math.round((tail(state.song.sections, 'outro') + 8) / 8) * 8, 16, 32);
+  return T;
+}
+
 // План сета: какие треки, в каком темпе, где начинается каждый и как сводится с предыдущим.
 export function planSet({ minutes = 60, mood = 'night', seed = 1 + Math.floor(Math.random() * 99999) } = {}) {
-  const M = MOODS[mood] || MOODS.night;
+  const M = MOODS[mood] || MOODS.night; // eslint-disable-line no-unused-vars
   return withSeed(seed, () => {
     // Сколько треков: каждый ~5,5 мин, но с соседом звучит вместе ~0,6 мин — считаем с запасом, лишнее отрежем ниже
     const n = Math.max(2, Math.ceil(minutes / (TRACK_MIN - 0.7)));
     const tracks = [];
-    let prevGenre = null, prevBpm = null, start = 0;
+    let start = 0;
     for (let i = 0; i < n; i++) {
-      const x = n > 1 ? i / (n - 1) : 0, q = Math.min(3, Math.floor(x * 4));
-      // Темп по кривой энергии: плавно между точками четвертей
-      const f = x * 3, k = Math.min(2, Math.floor(f)), target = Math.round(M.bpm[k] + (M.bpm[k + 1] - M.bpm[k]) * (f - k));
-      // Жанр — из подходящих по темпу (диджей не прыгает на 10 BPM): ±9 от нужного темпа, и не тот же, что был
-      let pool = M.path[q].filter(g => Math.abs(GENRES[g].bpm - target) <= 9);
-      if (!pool.length) pool = M.path[q];
-      if (pool.length > 1) pool = pool.filter(g => g !== prevGenre);
-      const genre = pick(pool);
-      const bpm = clamp(target, GENRES[genre].bpm - 8, GENRES[genre].bpm + 8);
-      const tseed = 1 + Math.floor(rnd() * 99999);
-      const state = genreState(emptyState(), genre);
-      state.bpm = bpm;
-      state.song = compose(state, TRACK_MIN, genre, tseed, true);
-      state.mode = 'song';
-      const bars = songBars(state.song), from = prevBpm || bpm;
-      // Первые такты — в темпе прошлого трека, потом за 16 тактов к своему
-      const xin = i ? tracks[i - 1].xout : 0;
-      const bpmAt = b => (b < xin ? from : b < xin + 16 ? from + ((bpm - from) * (b - xin + 1)) / 16 : bpm);
-      const T = { i, genre, bpm, from, seed: tseed, state, bars, xin, bpmAt };
-      T.times = barTimes(bars, bpmAt);
+      const T = makeTrack(n > 1 ? i / (n - 1) : 0, mood, tracks[i - 1]);
+      T.i = i;
       if (i) {
         // Переход: последние X тактов прошлого трека звучат вместе с первыми X тактами этого
         const A = tracks[i - 1], X = A.xout;
@@ -72,11 +81,7 @@ export function planSet({ minutes = 60, mood = 'night', seed = 1 + Math.floor(Ma
         A.fadeOut = [A.times[A.bars - X + sw], A.times[A.bars] - A.times[A.bars - X + sw]];
       }
       T.start = start;
-      // Сколько тактов этого трека сведём со следующим: по аутро этого и интро следующего (16–32)
-      T.xout = clamp(Math.round((tail(state.song.sections, 'outro') + 8) / 8) * 8, 16, 32);
       tracks.push(T);
-      prevGenre = genre;
-      prevBpm = bpm;
     }
     // Лишние треки в конце убираем, если сет и без них уже нужной длины
     while (tracks.length > 2) {
@@ -104,6 +109,13 @@ export function setAt(plan, t) {
   return { track: cur, bar: b, beat, bpm: cur.bpmAt(b), type: d ? d.type : 'outro', partName: d ? PART[d.type].name : '', steps: d ? d.steps : {} };
 }
 
+// Карточка сета: название, настроение, длина и путь жанров
+export function setInfo(plan) {
+  const m = Math.round(plan.total / 60), len = m >= 60 ? `${Math.floor(m / 60)} ч${m % 60 ? ' ' + (m % 60) + ' мин' : ''}` : `${m} мин`;
+  return { title: `${MOODS[plan.mood].name} · ${len}`, mood: plan.mood, moodName: MOODS[plan.mood].name, minutes: plan.minutes, sec: Math.round(plan.total),
+    seed: plan.seed, tracks: plan.tracks.map(T => `${GENRES[T.genre].name.replace(/ техно| Techno/i, '')} ${T.bpm}`) };
+}
+
 // Загрузить WAV на компьютер кусками по 8 МБ (большой Blob браузер не тянет)
 async function upload(file, r) {
   const bytes = new Uint8Array(r.pcm.buffer), CH = 8 << 20;
@@ -128,7 +140,7 @@ export async function renderSetAudio(plan, name, onProgress = () => {}) {
     parts.push({ file: file + '.wav', start: T.start, fadeIn: T.fadeIn, hpUntil: T.hpUntil, hpFrom: T.hpFrom, fadeOut: T.fadeOut });
   }
   onProgress(plan.tracks.length / (plan.tracks.length + 1), 'Свожу треки в один сет…');
-  const res = await fetch('/api/set-mix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parts }) }).then(x => x.json());
+  const res = await fetch('/api/set-mix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, parts, info: setInfo(plan) }) }).then(x => x.json());
   if (!res.file) throw new Error('Сведение не удалось: ' + (res.error || ''));
   onProgress(1, 'Готово');
   return res;

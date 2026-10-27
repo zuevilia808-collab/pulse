@@ -11,6 +11,7 @@ import { parse, normalize, QUICK } from './commands.js?v=5';
 import { Voice } from './voice.js?v=5';
 import { Mic, humToNotes, notesToSteps, beatboxToHits, hitsToPatterns } from './listen.js?v=5';
 import { Viz } from './viz.js?v=5';
+import { initSetView } from './setui.js?v=5';
 import { FL, flInit, flCandidates, flSound, FL_TRACKS, instName } from './fl.js?v=5';
 import { voxAddFl, VOX, STYLES, LANGS, SEXES, EVERY, voxInit, voxFetch, voxIdsOf, voxPattern, voxLabel, voxInfo, voxFilter, voxSearch, voxShuffle, planSongVox } from './vox.js?v=5';
 
@@ -799,14 +800,10 @@ async function exec(a) {
     case 'metro':
       state.metronome = a.on;
       return a.on ? 'Метроном включён' : 'Метроном выключен';
-    case 'hum':
-      takeVoice('hum', a.track || humTarget);
-      return '';
-    case 'beatbox':
-      takeVoice('beatbox');
-      return '';
-    case 'recStart': return startRec();
-    case 'recStop': return !recording && state.song ? saveSongWav() : stopRec();
+    // Напевание и битбокс убраны; запись — в разделе «Сет» (галочка «Записывать») или «Сохранить WAV» у трека
+    case 'hum': case 'beatbox': return 'Напевание и битбокс убраны — ноты ставь в «Студии», клетками';
+    case 'recStart': return 'Запись — в разделе «Сет»: включи «Записывать» и нажми «Играть сет»';
+    case 'recStop': return state.song ? saveSongWav() : 'Сначала сочини трек';
   }
   return '';
 }
@@ -1128,8 +1125,6 @@ function renderTransport() {
   pb.querySelector('span').textContent = engine.playing ? 'Стоп' : 'Играть';
   if (document.activeElement !== $('#keySel')) $('#keySel').value = state.key;
   if (document.activeElement !== $('#scaleSel')) $('#scaleSel').value = state.scale;
-  $('#recBtn').classList.toggle('on', recording);
-  if (!recording) $('#recBtn .lbl').textContent = 'Запись';
 }
 
 function renderGrid() {
@@ -1764,6 +1759,7 @@ function log(text, result, ok) {
   li.querySelector('q').textContent = text.trim();
   li.querySelector('span').textContent = result;
   const ol = $('#log');
+  if (!ol) return; // журнала больше нет на экране
   ol.prepend(li);
   while (ol.children.length > 40) ol.lastChild.remove();
 }
@@ -1914,22 +1910,20 @@ function bind() {
   $('#undoBtn').addEventListener('click', () => { if (undo()) { commit(); setDid('Отменил последнее изменение'); } });
   $('#helpBtn').addEventListener('click', openHelp);
   $('#helpClose').addEventListener('click', () => $('#helpDlg').close());
-  $('#recBtn').addEventListener('click', async () => {
-    const r = recording ? await stopRec() : await startRec();
-    setDid(r);
-  });
 
-  $('#humSeg').addEventListener('click', e => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    humTarget = b.dataset.t;
-    $('#humSeg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-  });
-  $('#humBtn').addEventListener('click', () => takeVoice('hum', humTarget));
-  $('#bbxBtn').addEventListener('click', () => takeVoice('beatbox'));
-  $('#takeCancel').addEventListener('click', () => { if (taking && taking.cancel) taking.cancel(); else hideTake(); });
-  try { $('#phonesChk').checked = localStorage.getItem('pulse.phones') === '1'; } catch { /* нет хранилища */ }
-  $('#phonesChk').addEventListener('change', e => { try { localStorage.setItem('pulse.phones', e.target.checked ? '1' : '0'); } catch { /* нет хранилища */ } });
+  // Разделы: «Сет» (диджей) и «Студия» (ручная работа)
+  const showView = v => {
+    $('#viewSet').hidden = v !== 'set';
+    $('#viewStudio').hidden = v !== 'studio';
+    document.body.classList.toggle('in-studio', v === 'studio');
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+    try { localStorage.setItem('pulse.view', v); } catch { /* нет хранилища */ }
+    requestAnimationFrame(() => { drawEnergy(); viz?.resize?.(); });
+  };
+  $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) showView(b.dataset.v); });
+  let view = 'set';
+  try { view = localStorage.getItem('pulse.view') || 'set'; } catch { /* нет хранилища */ }
+  showView(view === 'studio' ? 'studio' : 'set');
 
   // Звуки: наборы и тембр каждого инструмента
   $('#kits').addEventListener('click', e => {
@@ -2130,7 +2124,6 @@ function frame() {
   if (songAt !== lastSongAt) { lastSongAt = songAt; markSectionRows(); if (state.mode === 'song') renderHarm(); }
   moveSongHead();
   if (voice.want && mic.analyser) $('#micBtn').style.setProperty('--lvl', Math.min(1, mic.level() * 9).toFixed(3));
-  if (recording) $('#recBtn .lbl').textContent = fmtTime((performance.now() - recStartedAt) / 1000);
   requestAnimationFrame(frame);
 }
 
@@ -2180,6 +2173,9 @@ function init() {
   viz = new Viz($('#viz'), engine, () => state);
   engine.onKick = t => viz.kick(t);
   bind();
+  const setView = initSetView({ engine, toast });
+  // Обычный «Играть» останавливает диджея (и наоборот), чтобы не играло два сразу
+  $('#playBtn').addEventListener('click', () => { if (setView.playing()) setView.stop(); }, true);
   render();
   // Каталог адлибов: тысячи фраз, звук каждой загружается, только когда она нужна
   voxInit().then(ok => { if (ok) { voxAddFl(); voxFetch(voxIdsOf(state)); render(); } });

@@ -86,10 +86,33 @@ const server = http.createServer((req, res) => {
       let err = '';
       pr.stderr.on('data', d => { err += d; });
       pr.on('close', code => {
-        res.writeHead(code ? 500 : 200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(code ? { error: err.slice(-800) } : { file: wav }));
+        if (code) { res.writeHead(500, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: err.slice(-800) })); return; }
+        // MP3 для прослушивания и загрузки, карточка сета, промежуточные треки — удалить (на час это ~800 МБ)
+        const mp3 = path.join(dir, name + '.mp3');
+        const title = String((job.info && job.info.title) || 'Сет «Пульса»').slice(0, 120);
+        const enc = spawn(ffmpeg, ['-y', '-hide_banner', '-v', 'error', '-i', wav, '-c:a', 'libmp3lame', '-b:a', '320k', '-id3v2_version', '3',
+          '-metadata', `title=${title}`, '-metadata', 'artist=Пульс', mp3], { windowsHide: true });
+        enc.on('close', c2 => {
+          const info = { ...(job.info || {}), name, title, created: new Date().toISOString(), wav: name + '.wav', mp3: c2 ? null : name + '.mp3' };
+          fs.writeFileSync(path.join(dir, name + '.set.json'), JSON.stringify(info));
+          for (const x of parts) fs.unlink(path.join(dir, x.file), () => {});
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ file: wav, info }));
+        });
       });
     });
+    return;
+  }
+  // Список готовых сетов (карточки *.set.json в local/renders)
+  if (req.method === 'GET' && p === '/api/sets') {
+    const dir = path.join(ROOT, 'local', 'renders');
+    let list = [];
+    try {
+      list = fs.readdirSync(dir).filter(f => f.endsWith('.set.json')).map(f => {
+        try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { return null; }
+      }).filter(Boolean).sort((a, b) => String(b.created).localeCompare(String(a.created)));
+    } catch { /* папки ещё нет */ }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }).end(JSON.stringify(list));
     return;
   }
   if (p === '/') p = '/index.html';

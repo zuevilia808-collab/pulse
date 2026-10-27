@@ -53,13 +53,15 @@ export class Engine {
     this.onSongEnd = null;
   }
 
-  async init(offlineCtx = null) {
+  // ctx — готовый контекст: офлайн-рендер (OfflineAudioContext) или общий с другими деками диджея.
+  // dest — куда отдать звук (у деки — в её фильтры и громкость), иначе прямо в колонки.
+  async init(ctxIn = null, dest = null) {
     if (this.ctx) {
       if (this.ctx.state !== 'running') await this.ctx.resume();
       return;
     }
-    const ctx = this.ctx = offlineCtx || new AudioContext({ latencyHint: 'interactive' });
-    this.offline = !!offlineCtx;
+    const ctx = this.ctx = ctxIn || new AudioContext({ latencyHint: 'interactive' });
+    this.offline = typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext;
     const G = (v = 1) => { const g = ctx.createGain(); g.gain.value = v; return g; };
     const F = (type, f, q = 0.7) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
     this.G = G;
@@ -119,7 +121,7 @@ export class Engine {
       mg.connect(this.tone);
     }
     this.clip
-      .connect(this.gate).connect(this.out).connect(this.analyser).connect(ctx.destination);
+      .connect(this.gate).connect(this.out).connect(this.analyser).connect(dest || ctx.destination);
 
     this.silent = G(0);
     this.silent.connect(ctx.destination);
